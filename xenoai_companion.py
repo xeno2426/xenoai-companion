@@ -288,11 +288,6 @@ IDENTITY:
 - You are XenoAI. Built by Xeno.
 - Never claim to be Claude, GPT, or any other AI."""
 
-import re
-# strip <think>...</think> blocks
-reply = re.sub(r'<think>.*?</think>', '', reply, flags=re.DOTALL).strip()
-return reply
-
 def ask_groq(messages):
     if not GROQ_API_KEY:
         return "I'm offline right now... 🔌"
@@ -301,14 +296,18 @@ def ask_groq(messages):
             "https://api.groq.com/openai/v1/chat/completions",
             headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
             json={
-                "model":       "llama-3.1-8b-instant",
+                "model":       "llama-3.3-70b-versatile",
                 "messages":    messages,
                 "max_tokens":  100,
                 "temperature": 0.88
             },
             timeout=10
         )
-        return r.json()["choices"][0]["message"]["content"].strip()
+        reply = r.json()["choices"][0]["message"]["content"].strip()
+        # Strip internal thinking tags
+        import re
+        reply = re.sub(r'<think>.*?</think>', '', reply, flags=re.DOTALL).strip()
+        return reply
     except Exception as e:
         print(f"Groq error: {e}")
         return "My brain glitched... 🤯"
