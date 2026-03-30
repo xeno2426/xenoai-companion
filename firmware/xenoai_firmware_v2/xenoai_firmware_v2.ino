@@ -1,6 +1,6 @@
 /*
  * ╔══════════════════════════════════════════════════════════╗
- * ║         XenoAI Desk Companion — ESP32-S3 Firmware v2    ║
+ * ║         XenoAI Desk Companion — ESP32-S3 Firmware v2     ║
  * ║         Board: ESP32-S3-WROOM-1 N8R8                    ║
  * ║         Built by Xeno                                   ║
  * ╚══════════════════════════════════════════════════════════╝
