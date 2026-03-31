@@ -5,7 +5,8 @@ Desk companion backend for ESP32-S3
 Flask + PostgreSQL on Railway
 Routes: /api/vision  /api/touch  /api/state  /api/chat
 """
-
+# app.py
+from xenoai_companion import app
 import os, json, uuid, time, base64, hashlib, hmac
 from datetime import datetime
 from flask import Flask, request, jsonify, session

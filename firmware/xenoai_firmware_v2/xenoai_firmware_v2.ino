@@ -34,8 +34,8 @@
 #include <Adafruit_SSD1306.h>
 
 // ─── YOUR CONFIG — CHANGE THESE ──────────────────────────────────────────────
-#define WIFI_SSID    "YourWiFiName"
-#define WIFI_PASS    "YourWiFiPassword"
+#define WIFI_SSID    "Redmi 9i"
+#define WIFI_PASS    "strawberry"
 #define XENOAI_URL   "https://xenoai-companion.onrender.com"
 #define OTA_PASSWORD "xenoai123"
 
