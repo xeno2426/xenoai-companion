@@ -4,7 +4,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - uses: arduino/setup-arduino-cli@v1
       - run: |
           arduino-cli core install esp32:esp32
@@ -12,7 +12,7 @@ jobs:
           arduino-cli compile --fqbn esp32:esp32:esp32s3 \
             firmware/xenoai_firmware_v2/xenoai_firmware_v2.ino \
             --output-dir build/
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         with:
           name: firmware-bin
-          path: build/*.bin
+          path: build/
