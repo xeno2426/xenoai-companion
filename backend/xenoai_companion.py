@@ -6,8 +6,9 @@ Flask + PostgreSQL on Railway
 Routes: /api/vision  /api/touch  /api/state  /api/chat
 """
 # app.py
-import os, json, uuid, time, base64, hashlib, hmac
+import os, json, uuid, time, base64, hashlib, hmac, secrets, threading
 from datetime import datetime
+from collections import defaultdict
 from flask import Flask, request, jsonify, session
 
 # ─── OPTIONAL: OpenCV for server-side face detection ─────────────────────────
@@ -32,7 +33,11 @@ except ImportError:
 import requests as http
 
 app = Flask(__name__)
-app.secret_key  = os.environ.get("SECRET_KEY", "xenoai-companion-" + uuid.uuid4().hex)
+_secret = os.environ.get("SECRET_KEY", "")
+if not _secret:
+    print("⚠️  SECRET_KEY not set — sessions will break on every restart. Set it in env vars!")
+    _secret = "xenoai-companion-" + uuid.uuid4().hex
+app.secret_key  = _secret
 GROQ_API_KEY    = os.environ.get("GROQ_API_KEY", "")
 DATABASE_URL    = os.environ.get("DATABASE_URL", "")
 
@@ -114,8 +119,24 @@ init_db()
 
 # ─── AUTH ─────────────────────────────────────────────────────────────────────
 
-def hash_pw(p):  return hashlib.sha256(p.encode()).hexdigest()
-def check_pw(p, h): return hmac.compare_digest(hash_pw(p), h)
+def hash_pw(p):
+    """PBKDF2-HMAC-SHA256 with a random salt. Returns 'pbkdf2$<hex_salt>$<hex_hash>'."""
+    salt = secrets.token_hex(16)
+    h    = hashlib.pbkdf2_hmac("sha256", p.encode(), salt.encode(), 260_000).hex()
+    return f"pbkdf2${salt}${h}"
+
+def check_pw(plain, stored):
+    """Verify password. Handles both new pbkdf2 format and legacy bare SHA-256."""
+    if stored.startswith("pbkdf2$"):
+        try:
+            _, salt, h = stored.split("$")
+            expected   = hashlib.pbkdf2_hmac("sha256", plain.encode(), salt.encode(), 260_000).hex()
+            return hmac.compare_digest(expected, h)
+        except ValueError:
+            return False
+    # Legacy fallback — bare SHA-256 (no salt). Accepts login but should be rehashed on next write.
+    legacy = hashlib.sha256(plain.encode()).hexdigest()
+    return hmac.compare_digest(legacy, stored)
 
 def create_user(username, email, password):
     conn = get_db()
@@ -142,9 +163,16 @@ def verify_user(login, password):
         cur = conn.cursor()
         cur.execute("SELECT * FROM users WHERE username=%s OR email=%s",
                     (login.lower().strip(), login.lower().strip()))
-        row = cur.fetchone(); cur.close(); conn.close()
+        row = cur.fetchone()
         if row and check_pw(password, row["password_hash"]):
+            # Rehash legacy SHA-256 passwords transparently
+            if not row["password_hash"].startswith("pbkdf2$"):
+                cur.execute("UPDATE users SET password_hash=%s WHERE id=%s",
+                            (hash_pw(password), row["id"]))
+                conn.commit()
+            cur.close(); conn.close()
             return row["id"], row["username"], None
+        cur.close(); conn.close()
         return None, None, "Invalid credentials"
     except Exception as e:
         try: conn.close()
@@ -256,11 +284,13 @@ def compute_mood(state, event_type, face_detected=False):
     else:
         new_mood = state["mood"]
 
-    state["mood"]               = new_mood
-    state["energy"]             = energy
-    state["face_streak"]        = face_streak
-    state["total_interactions"] = state.get("total_interactions", 0) + 1
-    state["last_interaction"]   = now
+    state["mood"]        = new_mood
+    state["energy"]      = energy
+    state["face_streak"] = face_streak
+    # Only count real interactions (face / touch), not passive idle polls
+    if event_type != "idle":
+        state["total_interactions"] = state.get("total_interactions", 0) + 1
+    state["last_interaction"] = now
     if event_type == "face" and face_detected:
         state["last_face_seen"] = now
 
@@ -336,8 +366,8 @@ def companion_reply(event_type, context, mood, energy):
 def detect_face(jpeg_bytes):
     """Server-side face detection via OpenCV Haar cascade."""
     if not HAS_CV2:
-        # No OpenCV: assume face present if frame is large enough to contain one
-        return len(jpeg_bytes) > 8000
+        # OpenCV absent — firmware must send face_hint boolean instead of raw frame.
+        return False
     try:
         arr  = np.frombuffer(jpeg_bytes, np.uint8)
         img  = cv2.imdecode(arr, cv2.IMREAD_GRAYSCALE)
@@ -348,6 +378,24 @@ def detect_face(jpeg_bytes):
         return len(faces) > 0
     except Exception as e:
         print(f"Face detect error: {e}"); return False
+
+# ─── RATE LIMITER ─────────────────────────────────────────────────────────────
+# Simple in-memory per-IP limiter: max 20 requests per 60s window.
+_rate_lock   = threading.Lock()
+_rate_store  = defaultdict(list)   # ip → [timestamps]
+RATE_LIMIT   = 20
+RATE_WINDOW  = 60  # seconds
+
+def is_rate_limited(ip):
+    now = time.time()
+    with _rate_lock:
+        hits = _rate_store[ip]
+        # Evict timestamps outside the window
+        _rate_store[ip] = [t for t in hits if now - t < RATE_WINDOW]
+        if len(_rate_store[ip]) >= RATE_LIMIT:
+            return True
+        _rate_store[ip].append(now)
+        return False
 
 # ─── COMPANION ROUTES ─────────────────────────────────────────────────────────
 
@@ -498,6 +546,10 @@ def api_chat():
     Body: {"message": "...", "chat_id": "optional"}
     """
     try:
+        ip = request.remote_addr or "unknown"
+        if is_rate_limited(ip):
+            return jsonify({"error": "Too many requests. Slow down!"}), 429
+
         data     = request.get_json(silent=True) or {}
         user_msg = data.get("message", "").strip()
         if not user_msg:
@@ -520,6 +572,9 @@ def api_chat():
 
         history.append({"role": "user",      "content": user_msg})
         history.append({"role": "assistant", "content": reply})
+        # Prune to last 100 messages to prevent unbounded DB growth
+        if len(history) > 100:
+            history = history[-100:]
         save_chat_history(chat_id, history)
         save_state(state)
         log_interaction("chat", user_msg, reply, mood)
@@ -815,29 +870,53 @@ def dashboard():
     inp.value = '';
     const body = document.getElementById('chatBody');
     body.innerHTML += `<div class="msg-user">You</div><div class="msg-bot">${{msg}}</div>`;
-    const r = await fetch('/api/chat', {{
-      method:'POST',
-      headers:{{'Content-Type':'application/json'}},
-      body: JSON.stringify({{message: msg, chat_id: chatId}})
-    }});
-    const d = await r.json();
-    chatId = d.chat_id;
-    body.innerHTML += `<div class="msg-user">XenoAI · ${{d.mood}} ${{d.expression?.emoji||''}}</div><div class="msg-bot">${{d.reply}}</div>`;
     body.scrollTop = body.scrollHeight;
+    try {{
+      const r = await fetch('/api/chat', {{
+        method:'POST',
+        headers:{{'Content-Type':'application/json'}},
+        body: JSON.stringify({{message: msg, chat_id: chatId}})
+      }});
+      const d = await r.json();
+      if (d.error) {{
+        body.innerHTML += `<div class="msg-user">XenoAI</div><div class="msg-bot" style="color:#f66">{{d.error}}</div>`;
+      }} else {{
+        chatId = d.chat_id;
+        body.innerHTML += `<div class="msg-user">XenoAI · ${{d.mood}} ${{d.expression?.emoji||''}}</div><div class="msg-bot">${{d.reply}}</div>`;
+      }}
+      body.scrollTop = body.scrollHeight;
+    }} catch(e) {{
+      body.innerHTML += `<div class="msg-bot" style="color:#f66">Connection error.</div>`;
+    }}
   }}
   document.getElementById('chatInput').addEventListener('keydown', e => {{
     if(e.key === 'Enter') sendMsg();
   }});
-  // Auto reload state panel every 6s without clearing chat
-  let reloadTimer;
-  function scheduleReload() {{
-    reloadTimer = setTimeout(() => {{
-      const chatHtml = document.getElementById('chatBody').innerHTML;
-      const cid = chatId;
-      location.reload();
-    }}, 6000);
+
+  // ── Fetch-based state refresh — never reloads the page ──────────────────
+  async function refreshState() {{
+    try {{
+      const r = await fetch('/api/state');
+      const d = await r.json();
+      if (d.mood) {{
+        document.querySelector('.mood-text').textContent = d.mood;
+        document.querySelector('.energy-fill').style.width = d.energy + '%';
+        document.querySelectorAll('.cell-val')[0].textContent = d.energy;
+        document.querySelectorAll('.cell-val')[1].textContent = d.total_interactions;
+        document.querySelectorAll('.cell-val')[2].textContent = d.face_streak;
+        document.querySelector('.expr-row').textContent =
+          'eyes: ' + (d.expression?.eyes||'?') + '  ·  mouth: ' + (d.expression?.mouth||'?');
+        document.querySelector('.time-pill').textContent = d.time + ' · ' + d.date;
+        if (d.message) {{
+          const body = document.getElementById('chatBody');
+          body.innerHTML += `<div class="msg-user">XenoAI · ${{d.mood}}</div><div class="msg-bot">${{d.message}}</div>`;
+          body.scrollTop = body.scrollHeight;
+        }}
+      }}
+    }} catch(e) {{ console.warn('State refresh failed', e); }}
+    setTimeout(refreshState, 6000);
   }}
-  scheduleReload();
+  setTimeout(refreshState, 6000);
 </script>
 </body>
 </html>"""
