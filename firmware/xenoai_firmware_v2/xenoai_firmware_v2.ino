@@ -241,9 +241,9 @@ void drawFaceHappy() {
   display.drawLine(44, 19, 50, 24, WHITE);
   display.drawLine(78, 24, 84, 19, WHITE);
   display.drawLine(84, 19, 90, 24, WHITE);
-  // Smile
+  // Smile — center lower than edges = U-shape
   for (int i = -20; i <= 20; i++) {
-    display.drawPixel(64 + i, 42 + (i * i) / 30, WHITE);
+    display.drawPixel(64 + i, 50 - (i * i) / 30, WHITE);
   }
 }
 
@@ -257,10 +257,10 @@ void drawFaceExcited() {
   display.drawLine(84, 18, 84, 30, WHITE);
   display.drawLine(79, 19, 89, 29, WHITE);
   display.drawLine(89, 19, 79, 29, WHITE);
-  // Big grin
+  // Big grin — two lines, center lower than edges
   for (int i = -25; i <= 25; i++) {
-    display.drawPixel(64 + i, 40 + (i * i) / 25, WHITE);
-    display.drawPixel(64 + i, 41 + (i * i) / 25, WHITE);
+    display.drawPixel(64 + i, 50 - (i * i) / 25, WHITE);
+    display.drawPixel(64 + i, 51 - (i * i) / 25, WHITE);
   }
 }
 
@@ -293,9 +293,9 @@ void drawFaceSad() {
   // Tears
   display.drawLine(48, 30, 50, 38, WHITE);
   display.drawLine(88, 30, 90, 38, WHITE);
-  // Frown
+  // Frown — center higher than edges = arch-shape
   for (int i = -20; i <= 20; i++) {
-    display.drawPixel(64 + i, 50 - (i * i) / 30, WHITE);
+    display.drawPixel(64 + i, 42 + (i * i) / 30, WHITE);
   }
 }
 
@@ -307,7 +307,7 @@ void drawFaceCurious() {
   display.fillCircle(44, 24, 2, BLACK);
   display.fillCircle(84, 24, 2, BLACK);
   for (int i = -15; i <= 15; i++) {
-    display.drawPixel(64 + i, 44 + (i * i) / 35, WHITE);
+    display.drawPixel(64 + i, 48 - (i * i) / 35, WHITE);
   }
   display.setCursor(110, 10); display.print("?");
 }
