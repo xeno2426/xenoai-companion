@@ -433,6 +433,18 @@ def api_vision():
         prev_streak  = state["face_streak"]
         was_sleeping = prev_mood == "sleepy"
 
+        # No HC-SR04 / no presence: if already at streak=0 and no face, this is a
+        # no-op ping — skip mood computation so idle polling can drive mood properly.
+        if not face_detected and prev_streak == 0:
+            return jsonify({
+                "face_detected": False,
+                "mood":          prev_mood,
+                "energy":        state["energy"],
+                "expression":    EXPRESSIONS.get(prev_mood, EXPRESSIONS["neutral"]),
+                "message":       "",
+                "face_streak":   0
+            })
+
         state    = compute_mood(state, "face", face_detected=face_detected)
         new_mood = state["mood"]
 
