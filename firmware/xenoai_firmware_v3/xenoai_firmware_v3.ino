@@ -255,17 +255,28 @@ void parseResponse(const String& json) {
       currentMood = newMood;
       needsRedraw = true; 
 
+      // Reset gaze direction to center before applying new mood
+      roboEyes.setPosition(DEFAULT);
+
       // Map the backend string to the visual RoboEyes library states
       if (currentMood == "happy") {
-        roboEyes.setMood(HAPPY); 
+        roboEyes.setMood(HAPPY);
+      } else if (currentMood == "angry") {
+        roboEyes.setMood(ANGRY);
+      } else if (currentMood == "tired") {
+        roboEyes.setMood(TIRED);
+      } else if (currentMood == "sad") {
+        roboEyes.setMood(TIRED); // Droopy eyelids
+        roboEyes.setPosition(S); // Looking down at the desk
+      } else if (currentMood == "irritated") {
+        roboEyes.setMood(ANGRY); // Angry eyebrows
+        roboEyes.anim_confused(); // Shaking side-to-side
       } else if (currentMood == "excited") {
-        roboEyes.anim_laugh(); 
+        roboEyes.anim_laugh(); // Eyes shaking up and down
       } else if (currentMood == "surprised" || currentMood == "curious") {
-        roboEyes.anim_confused(); 
-      } else if (currentMood == "sleepy" || currentMood == "sad") {
-        roboEyes.setMood(TIRED); 
+        roboEyes.anim_confused();
       } else {
-        roboEyes.setMood(DEFAULT); 
+        roboEyes.setMood(DEFAULT);
       }
     }
   }
@@ -279,6 +290,7 @@ void parseResponse(const String& json) {
     }
   }
 }
+
 
 
 // ─── BACKEND API CALLS ───────────────────────────────────────────────────────
