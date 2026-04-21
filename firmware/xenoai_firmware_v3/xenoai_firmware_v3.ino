@@ -48,6 +48,9 @@
 #define WHITE SH110X_WHITE
 #define BLACK SH110X_BLACK
 
+#include <FluxGarage_RoboEyes.h>
+RoboEyes roboEyes; 
+
 // ─── USER CONFIG — EDIT THESE ────────────────────────────────────────────────
 #define WIFI_SSID        "Redmi 9i"
 #define WIFI_PASS        "strawberry"
@@ -250,9 +253,23 @@ void parseResponse(const String& json) {
     String newMood = doc["mood"].as<String>();
     if (newMood != currentMood) {
       currentMood = newMood;
-      needsRedraw = true;
+      needsRedraw = true; 
+
+      // Map the backend string to the visual RoboEyes library states
+      if (currentMood == "happy") {
+        roboEyes.setMood(HAPPY); 
+      } else if (currentMood == "excited") {
+        roboEyes.anim_laugh(); 
+      } else if (currentMood == "surprised" || currentMood == "curious") {
+        roboEyes.anim_confused(); 
+      } else if (currentMood == "sleepy" || currentMood == "sad") {
+        roboEyes.setMood(TIRED); 
+      } else {
+        roboEyes.setMood(DEFAULT); 
+      }
     }
   }
+  
   if (doc.containsKey("message")) {
     String msg = doc["message"].as<String>();
     if (msg.length() > 0) {
@@ -262,6 +279,7 @@ void parseResponse(const String& json) {
     }
   }
 }
+
 
 // ─── BACKEND API CALLS ───────────────────────────────────────────────────────
 void sendTouch() {
@@ -632,6 +650,16 @@ void setup() {
   }
  // Double-clear flushes any garbage left in SSD1306 GDDRAM after boot
   display.clearDisplay();
+    // Initialize RoboEyes with your screen dimensions and a target framerate (e.g., 100 FPS)
+  roboEyes.begin(SCREEN_W, SCREEN_H, 100);
+
+  // Start the autoblinker. Parameters: (ON/OFF, interval in seconds, variation in seconds)
+  // This blinks both eyes randomly around every 3 seconds (+/- 2 seconds).
+  roboEyes.setAutoblinker(true, 3, 2);
+
+  // Start idle mode. Parameters: (ON/OFF, interval in seconds, variation in seconds)
+  // This randomly repositions both eyes so XenoAI "looks around" the room.
+  roboEyes.setIdleMode(true, 4, 2);
   display.display();
   delay(50);
   display.clearDisplay();
@@ -679,6 +707,7 @@ void setup() {
   Serial.println("Boot complete.");
 }
 
+// ─── MAIN LOOP ───────────────────────────────────────────────────────────────
 // ─── MAIN LOOP ───────────────────────────────────────────────────────────────
 void loop() {
   ArduinoOTA.handle();
@@ -729,8 +758,13 @@ void loop() {
     return;
   }
 
-  // Face mode: static — redraw only on state change (needsRedraw).
-  // All other modes: also redraw on 200 ms timer (live clock / stopwatch).
+  // ── ROBOEYES UPDATE ───────────────────────────────────────────────────────
+  // Continuously calculate and draw the animation state if Face mode is active
+  if (currentMode == MODE_FACE) {
+      roboEyes.update();
+  }
+
+  // All other modes: redraw on state change or 200 ms timer (live clock / stopwatch).
   bool shouldRedraw = needsRedraw;
   if (!shouldRedraw && currentMode != MODE_FACE) {
     shouldRedraw = (now - lastDisplayAt > DISPLAY_INTERVAL);
@@ -740,7 +774,7 @@ void loop() {
     lastDisplayAt = now;
     needsRedraw   = false;
     switch (currentMode) {
-      case MODE_FACE:      drawModeFace();      break;
+      case MODE_FACE:      /* Handled continuously by roboEyes.update() above */ break;
       case MODE_CLOCK:     drawModeClock();     break;
       case MODE_DATE:      drawModeDate();      break;
       case MODE_WEATHER:   drawModeWeather();   break;
