@@ -45,6 +45,8 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_SH110X.h>
 #include <time.h>
+#define WHITE SH110X_WHITE
+#define BLACK SH110X_BLACK
 
 // ─── USER CONFIG — EDIT THESE ────────────────────────────────────────────────
 #define WIFI_SSID        "Redmi 9i"
