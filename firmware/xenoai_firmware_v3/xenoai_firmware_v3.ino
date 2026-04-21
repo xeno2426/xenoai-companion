@@ -75,7 +75,9 @@
 // ─── OLED ────────────────────────────────────────────────────────────────────
 #define SCREEN_W 128
 #define SCREEN_H  64
-Adafruit_SSD1306 display(SCREEN_W, SCREEN_H, &Wire, -1);
+// Buffer forced into internal DRAM — OPI PSRAM corrupts SSD1306 framebuffer
+static uint8_t DRAM_ATTR oledBuf[SCREEN_W * SCREEN_H / 8];
+Adafruit_SSD1306 display(SCREEN_W, SCREEN_H, oledBuf, &Wire, -1);
 
 // ─── TIMING CONSTANTS ────────────────────────────────────────────────────────
 #define STATE_INTERVAL    6000UL    // Backend poll every 6 s
