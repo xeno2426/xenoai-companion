@@ -8,7 +8,7 @@ jobs:
       - uses: arduino/setup-arduino-cli@v1
       - run: |
           arduino-cli core install esp32:esp32
-          arduino-cli lib install "Adafruit SH110X" "Adafruit GFX Library" "ArduinoJson"
+          arduino-cli lib install "Adafruit SH110X" "FluxGarage RoboEyes" "Adafruit GFX Library" "ArduinoJson"
           arduino-cli compile --fqbn esp32:esp32:esp32s3 \
             firmware/xenoai_firmware_v3/xenoai_firmware_v3.ino \
             --output-dir build/
