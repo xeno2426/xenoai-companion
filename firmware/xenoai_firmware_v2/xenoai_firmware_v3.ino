@@ -53,8 +53,8 @@
 #define OTA_PASSWORD     "xenoai123"
 
 // weatherapi.com — free account at https://www.weatherapi.com/
-#define WEATHER_API_KEY  "YOUR_WEATHERAPI_KEY_HERE"
-#define WEATHER_CITY     "London"   // city name OR "lat,lon" e.g. "28.6,77.2"
+#define WEATHER_API_KEY  "ca6c8ee702644b2cbe534732262004"
+#define WEATHER_CITY     "Nagpur"   // city name OR "lat,lon" e.g. "28.6,77.2"
 
 // Timezone: seconds east of UTC
 //   IST  (India)    = 19800   (UTC+5:30)
