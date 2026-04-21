@@ -103,9 +103,10 @@ RoboEyes roboEyes(display);
 #define US_FIRE_INTERVAL  500UL     // Fire ultrasonic trigger every 500 ms
 #define US_TIMEOUT_US     20000UL   // Max 20 ms echo wait (~343 cm range)
 #define LIFE_SLEEP_DIST   100.0f    // cm — beyond this = "absent"
-#define LIFE_WAKE_DIST     60.0f    // cm — closer than this = "present" (wakes device)
-#define LIFE_ANGRY_DIST    10.0f    // cm — closer than this = personal space violation
-#define SLEEP_TIMEOUT_MS  300000UL  // 5 minutes absent → sleep
+#define LIFE_WAKE_DIST     35.0f    // cm — closer than this = "present" (wakes device)
+#define LIFE_ANGRY_DIST     5.0f    // cm — closer than this = personal space violation
+#define LIFE_CALM_DIST      7.0f    // cm — beyond this = restore normal expression
+#define SLEEP_TIMEOUT_MS  120000UL  // 2 minutes absent → sleep
 
 // ─── HC-SR04 STATE ───────────────────────────────────────────────────────────
 float         currentDistanceCm  = 999.0f; // Start as "nobody present"
@@ -414,13 +415,13 @@ void fireUltrasonic() {
 // Reads currentDistanceCm and drives autonomous eye/display behaviour.
 // Rules (checked in priority order each loop after each sensor reading):
 //
-//   1. SLEEPING  + distance < WAKE_DIST (60 cm)
+//   1. SLEEPING  + distance < WAKE_DIST (35 cm)
 //        → Wake: DEFAULT mood, anim_confused, POST /api/arrived, switch to FACE
 //
-//   2. AWAKE     + distance < ANGRY_DIST (10 cm)  [personal space]
-//        → ANGRY mood + anim_confused (one-shot on entry, restored on exit)
+//   2. AWAKE     + distance < ANGRY_DIST (5 cm)  [personal space]
+//        → ANGRY mood + anim_confused (one-shot on entry, restored when > 7 cm)
 //
-//   3. AWAKE     + absent > SLEEP_TIMEOUT (5 min)
+//   3. AWAKE     + absent > SLEEP_TIMEOUT (2 min)
 //        → Sleep: TIRED mood, blank display
 //
 // Backend mood changes are buffered in currentMood; they resume on wake
@@ -473,8 +474,9 @@ void handleLifeLogic(unsigned long now) {
     Serial.println("[life] Personal space violated — ANGRY");
     roboEyes.setMood(ANGRY);
     roboEyes.anim_confused();  // Head-shake animation
-  } else if (!inPersonalSpace && personalSpaceActive) {
-    // Exit personal-space state — restore last known backend mood
+  } else if (personalSpaceActive &&
+             (currentDistanceCm == 0.0f || currentDistanceCm >= LIFE_CALM_DIST)) {
+    // Exit personal-space state once they back beyond 7 cm — restore backend mood
     personalSpaceActive = false;
     Serial.println("[life] Personal space cleared — restoring mood");
     applyMoodFromString(currentMood);
