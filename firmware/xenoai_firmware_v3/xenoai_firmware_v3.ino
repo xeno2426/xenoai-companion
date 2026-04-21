@@ -102,7 +102,7 @@ RoboEyes roboEyes(display);
 // ─── HC-SR04 CONSTANTS ───────────────────────────────────────────────────────
 #define US_FIRE_INTERVAL  500UL     // Fire ultrasonic trigger every 500 ms
 #define US_TIMEOUT_US     20000UL   // Max 20 ms echo wait (~343 cm range)
-#define LIFE_SLEEP_DIST   100.0f    // cm — beyond this = "absent"
+#define LIFE_SLEEP_DIST   35.0f    // cm — beyond this = "absent"
 #define LIFE_WAKE_DIST     35.0f    // cm — closer than this = "present" (wakes device)
 #define LIFE_ANGRY_DIST     5.0f    // cm — closer than this = personal space violation
 #define LIFE_CALM_DIST      7.0f    // cm — beyond this = restore normal expression
