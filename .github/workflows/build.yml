@@ -10,7 +10,7 @@ jobs:
           arduino-cli core install esp32:esp32
           arduino-cli lib install "Adafruit SSD1306" "Adafruit GFX Library" "ArduinoJson"
           arduino-cli compile --fqbn esp32:esp32:esp32s3 \
-            firmware/xenoai_firmware_v2/xenoai_firmware_v3.ino \
+            firmware/xenoai_firmware_v3/xenoai_firmware_v3.ino \
             --output-dir build/
       - uses: actions/upload-artifact@v4
         with:
