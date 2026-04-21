@@ -48,9 +48,6 @@
 #define WHITE SH110X_WHITE
 #define BLACK SH110X_BLACK
 
-#include <FluxGarage_RoboEyes.h>
-RoboEyes roboEyes; 
-
 // ─── USER CONFIG — EDIT THESE ────────────────────────────────────────────────
 #define WIFI_SSID        "Redmi 9i"
 #define WIFI_PASS        "strawberry"
@@ -81,6 +78,9 @@ RoboEyes roboEyes;
 #define SCREEN_W 128
 #define SCREEN_H  64
 Adafruit_SH1106G display(SCREEN_W, SCREEN_H, &Wire, -1);
+// Initialize RoboEyes AFTER the display object is created
+#include <FluxGarage_RoboEyes.h>
+RoboEyes roboEyes(display);
 
 // ─── TIMING CONSTANTS ────────────────────────────────────────────────────────
 #define STATE_INTERVAL    6000UL    // Backend poll every 6 s
