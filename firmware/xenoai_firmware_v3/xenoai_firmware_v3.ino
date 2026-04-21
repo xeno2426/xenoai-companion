@@ -43,7 +43,7 @@
 #include <ArduinoJson.h>
 #include <Wire.h>
 #include <Adafruit_GFX.h>
-#include <Adafruit_SSD1306.h>
+#include <Adafruit_SH110X.h>
 #include <time.h>
 
 // ─── USER CONFIG — EDIT THESE ────────────────────────────────────────────────
@@ -75,7 +75,7 @@
 // ─── OLED ────────────────────────────────────────────────────────────────────
 #define SCREEN_W 128
 #define SCREEN_H  64
-Adafruit_SSD1306 display(SCREEN_W, SCREEN_H, &Wire, -1);
+Adafruit_SH1106G display(SCREEN_W, SCREEN_H, &Wire, -1);
 
 // ─── TIMING CONSTANTS ────────────────────────────────────────────────────────
 #define STATE_INTERVAL    6000UL    // Backend poll every 6 s
@@ -624,7 +624,7 @@ void setup() {
 
   // OLED init
   Wire.begin(OLED_SDA, OLED_SCL);
-  if (!display.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR)) {
+  if (!display.begin(OLED_ADDR, true)) {
     Serial.println("OLED FAIL — halting");
     while (true) {}
   }
