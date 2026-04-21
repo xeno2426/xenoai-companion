@@ -7,11 +7,13 @@
  * ╚══════════════════════════════════════════════════════════════╝
  *
  * HARDWARE:
- *   ESP32-S3-WROOM-1 N8R8 | OLED 1.3" SSD1306 (I2C, SDA=8, SCL=9)
+ *   ESP32-S3-WROOM-1 N8R8 | OLED 1.3" SH1106 (I2C, SDA=8, SCL=9)
  *   TTP223 capacitive touch sensor (GPIO4)
+ *   HC-SR04 ultrasonic sensor (TRIG=GPIO5, ECHO=GPIO6)
  *
  * LIBRARIES (Arduino Library Manager):
  *   Adafruit SSD1306 · Adafruit GFX Library · ArduinoJson
+ *   FluxGarage_RoboEyes
  *
  * ARDUINO IDE SETTINGS:
  *   Board: ESP32S3 Dev Module | Flash: 8MB | PSRAM: OPI PSRAM
@@ -25,15 +27,21 @@
  *                  Stopwatch mode : Start → Pause → Reset  (cycles each hold)
  *                  Clock / Date   : No action
  *
+ * HC-SR04 AUTONOMOUS BEHAVIORS:
+ *   < 10 cm    → Personal space violated: ANGRY mood + head shake
+ *   < 60 cm    → Wake from sleep: DEFAULT mood + surprised animation + /api/arrived
+ *   > 100 cm   → Absence timer starts; after 5 min → Sleep (display off)
+ *
  * CHANGES FROM v2:
- *   - HC-SR04 / ultrasonic removed entirely (hardware absent)
+ *   - HC-SR04 integrated (non-blocking: pulseIn 20 ms timeout, fired every 500 ms)
+ *   - Autonomous life state machine: AWAKE / SLEEPING
+ *   - Presence webhook: POST /api/arrived on wake transition
+ *   - applyMoodFromString() helper extracted for reuse by life logic
  *   - Touch ISR changed RISING→CHANGE for tap vs long-press detection
  *   - Mode system added (5 modes)
  *   - NTP clock via configTime() — no extra library
  *   - Weather via weatherapi.com with ArduinoJson filtered parse
  *   - Stopwatch with accurate millis() accumulator
- *   - Tap in face mode now cycles to next mode;
- *     long-press in face mode triggers AI (preserves AI interaction)
  */
 
 // ─── LIBRARIES ───────────────────────────────────────────────────────────────
@@ -73,6 +81,8 @@
 #define OLED_ADDR  0x3C
 #define TOUCH_PIN  4
 #define LED_PIN    2
+#define TRIG_PIN   5   // HC-SR04 Trigger
+#define ECHO_PIN   6   // HC-SR04 Echo
 
 // ─── OLED ────────────────────────────────────────────────────────────────────
 #define SCREEN_W 128
@@ -83,11 +93,29 @@ Adafruit_SH1106G display(SCREEN_W, SCREEN_H, &Wire, -1);
 RoboEyes roboEyes(display);
 
 // ─── TIMING CONSTANTS ────────────────────────────────────────────────────────
-#define STATE_INTERVAL    6000UL    // Backend poll every 6 s
-#define MESSAGE_DURATION  4000UL   // Show AI message for 4 s
-#define DISPLAY_INTERVAL   200UL   // Non-face display refresh rate (ms)
-#define WEATHER_INTERVAL 600000UL  // Re-fetch weather every 10 min
-#define LONG_PRESS_MS      600UL   // Hold ≥ 600 ms → long press
+#define STATE_INTERVAL    6000UL     // Backend poll every 6 s
+#define MESSAGE_DURATION  4000UL    // Show AI message for 4 s
+#define DISPLAY_INTERVAL   200UL    // Non-face display refresh rate (ms)
+#define WEATHER_INTERVAL 600000UL   // Re-fetch weather every 10 min
+#define LONG_PRESS_MS      600UL    // Hold ≥ 600 ms → long press
+
+// ─── HC-SR04 CONSTANTS ───────────────────────────────────────────────────────
+#define US_FIRE_INTERVAL  500UL     // Fire ultrasonic trigger every 500 ms
+#define US_TIMEOUT_US     20000UL   // Max 20 ms echo wait (~343 cm range)
+#define LIFE_SLEEP_DIST   100.0f    // cm — beyond this = "absent"
+#define LIFE_WAKE_DIST     60.0f    // cm — closer than this = "present" (wakes device)
+#define LIFE_ANGRY_DIST    10.0f    // cm — closer than this = personal space violation
+#define SLEEP_TIMEOUT_MS  300000UL  // 5 minutes absent → sleep
+
+// ─── HC-SR04 STATE ───────────────────────────────────────────────────────────
+float         currentDistanceCm  = 999.0f; // Start as "nobody present"
+unsigned long lastUltrasonicAt   = 0;
+
+// ─── LIFE STATE MACHINE ───────────────────────────────────────────────────────
+enum LifeState { LIFE_AWAKE, LIFE_SLEEPING };
+LifeState     lifeState          = LIFE_AWAKE;
+unsigned long lastPresenceAt     = 0;   // Last millis() someone was within LIFE_SLEEP_DIST
+bool          personalSpaceActive = false; // True while < LIFE_ANGRY_DIST
 
 // ─── APP MODES ───────────────────────────────────────────────────────────────
 enum AppMode {
@@ -143,7 +171,7 @@ void IRAM_ATTR onTouchChange() {
   }
 }
 
-// ─── OLED HELPERS (defined early — called from WiFi/OTA setup) ───────────────
+// ─── OLED HELPERS ────────────────────────────────────────────────────────────
 
 void drawText(int x, int y, const String& text) {
   display.setTextSize(1);
@@ -243,6 +271,22 @@ String httpGet(const String& endpoint) {
   return resp;
 }
 
+// ─── MOOD HELPER ─────────────────────────────────────────────────────────────
+// Centralised so both parseResponse() and the life state machine can call it
+// without duplicating the if/else chain.
+void applyMoodFromString(const String& mood) {
+  roboEyes.setPosition(DEFAULT);
+
+  if      (mood == "happy")                      roboEyes.setMood(HAPPY);
+  else if (mood == "angry")                      roboEyes.setMood(ANGRY);
+  else if (mood == "tired")                      roboEyes.setMood(TIRED);
+  else if (mood == "sad")  { roboEyes.setMood(TIRED);  roboEyes.setPosition(S); }
+  else if (mood == "irritated") { roboEyes.setMood(ANGRY); roboEyes.anim_confused(); }
+  else if (mood == "excited")                    roboEyes.anim_laugh();
+  else if (mood == "surprised" || mood == "curious") roboEyes.anim_confused();
+  else                                           roboEyes.setMood(DEFAULT);
+}
+
 // ─── BACKEND JSON PARSER ─────────────────────────────────────────────────────
 void parseResponse(const String& json) {
   if (json.isEmpty()) return;
@@ -253,34 +297,14 @@ void parseResponse(const String& json) {
     String newMood = doc["mood"].as<String>();
     if (newMood != currentMood) {
       currentMood = newMood;
-      needsRedraw = true; 
-
-      // Reset gaze direction to center before applying new mood
-      roboEyes.setPosition(DEFAULT);
-
-      // Map the backend string to the visual RoboEyes library states
-      if (currentMood == "happy") {
-        roboEyes.setMood(HAPPY);
-      } else if (currentMood == "angry") {
-        roboEyes.setMood(ANGRY);
-      } else if (currentMood == "tired") {
-        roboEyes.setMood(TIRED);
-      } else if (currentMood == "sad") {
-        roboEyes.setMood(TIRED); // Droopy eyelids
-        roboEyes.setPosition(S); // Looking down at the desk
-      } else if (currentMood == "irritated") {
-        roboEyes.setMood(ANGRY); // Angry eyebrows
-        roboEyes.anim_confused(); // Shaking side-to-side
-      } else if (currentMood == "excited") {
-        roboEyes.anim_laugh(); // Eyes shaking up and down
-      } else if (currentMood == "surprised" || currentMood == "curious") {
-        roboEyes.anim_confused();
-      } else {
-        roboEyes.setMood(DEFAULT);
+      needsRedraw = true;
+      // Only apply roboEyes mood when life is not overriding
+      if (lifeState == LIFE_AWAKE && !personalSpaceActive) {
+        applyMoodFromString(currentMood);
       }
     }
   }
-  
+
   if (doc.containsKey("message")) {
     String msg = doc["message"].as<String>();
     if (msg.length() > 0) {
@@ -290,8 +314,6 @@ void parseResponse(const String& json) {
     }
   }
 }
-
-
 
 // ─── BACKEND API CALLS ───────────────────────────────────────────────────────
 void sendTouch() {
@@ -304,6 +326,13 @@ void sendTouch() {
 void pollState() {
   String resp = httpGet("/api/state");
   if (!resp.isEmpty()) parseResponse(resp);
+}
+
+void sendArrived() {
+  Serial.println("[life] -> /api/arrived");
+  String resp = httpPost("/api/arrived", "{}");
+  if (!resp.isEmpty()) parseResponse(resp);
+  Serial.println("[life] arrived: " + resp.substring(0, 80));
 }
 
 // ─── WEATHER ─────────────────────────────────────────────────────────────────
@@ -348,16 +377,122 @@ void fetchWeather() {
 }
 
 // ─── NTP HELPER ──────────────────────────────────────────────────────────────
-// After setup() sync, this returns in <1 ms (reads cached ESP32 RTC).
-// The 200 ms timeout only applies if NTP hasn't synced yet.
 bool getTime(struct tm& t) {
   return getLocalTime(&t, 200);
 }
 
-// ─── FACE EXPRESSIONS ────────────────────────────────────────────────────────
-// Face occupies roughly y=10..50, mouth y=42..50, eyes y=19..29.
-// Faces are drawn after clearDisplay(); the caller calls display.display().
+// ─── HC-SR04: NON-BLOCKING TRIGGER ───────────────────────────────────────────
+// Called from loop() every US_FIRE_INTERVAL ms.
+// Uses pulseIn() with a hard 20 ms ceiling so the main loop never stalls long.
+// At the speed of sound (~343 m/s), 20 ms covers a round-trip of ~343 cm —
+// well beyond the HC-SR04's rated 400 cm max, so any genuine object is caught.
+// A return value of 0 means timeout (no object detected); we treat that as
+// "nobody present" (distance stored as 0.0f, handled as > LIFE_SLEEP_DIST).
+void fireUltrasonic() {
+  // 2 µs LOW to settle, then 10 µs HIGH pulse
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
 
+  // Read echo — blocks AT MOST US_TIMEOUT_US µs (20 ms) if nothing detected
+  long duration = pulseIn(ECHO_PIN, HIGH, US_TIMEOUT_US);
+
+  if (duration == 0) {
+    // Timeout: no reflection within range
+    currentDistanceCm = 0.0f;
+  } else {
+    // duration (µs) / 58.0 gives cm  (speed-of-sound round-trip formula)
+    currentDistanceCm = (float)duration / 58.0f;
+  }
+
+  Serial.printf("[sonar] %.1f cm\n", currentDistanceCm);
+}
+
+// ─── LIFE STATE MACHINE ───────────────────────────────────────────────────────
+// Reads currentDistanceCm and drives autonomous eye/display behaviour.
+// Rules (checked in priority order each loop after each sensor reading):
+//
+//   1. SLEEPING  + distance < WAKE_DIST (60 cm)
+//        → Wake: DEFAULT mood, anim_confused, POST /api/arrived, switch to FACE
+//
+//   2. AWAKE     + distance < ANGRY_DIST (10 cm)  [personal space]
+//        → ANGRY mood + anim_confused (one-shot on entry, restored on exit)
+//
+//   3. AWAKE     + absent > SLEEP_TIMEOUT (5 min)
+//        → Sleep: TIRED mood, blank display
+//
+// Backend mood changes are buffered in currentMood; they resume on wake
+// or when personal-space clears, via applyMoodFromString().
+void handleLifeLogic(unsigned long now) {
+  // "Present" = a real reading within the sleep threshold
+  bool someonePresent = (currentDistanceCm > 0.0f &&
+                         currentDistanceCm <= LIFE_SLEEP_DIST);
+  if (someonePresent) lastPresenceAt = now;
+
+  // ── Case 1: Device is sleeping — check for wake condition ────────────────
+  if (lifeState == LIFE_SLEEPING) {
+    bool wakeCondition = (currentDistanceCm > 0.0f &&
+                          currentDistanceCm < LIFE_WAKE_DIST);
+
+    if (wakeCondition) {
+      Serial.println("[life] WAKE — someone within " + String(LIFE_WAKE_DIST) + " cm");
+      lifeState           = LIFE_AWAKE;
+      lastPresenceAt      = now;
+      personalSpaceActive = false;
+
+      // Restore roboEyes and animate a "surprised" wake
+      roboEyes.setMood(DEFAULT);
+      roboEyes.anim_confused();
+
+      // Switch to face mode so the user sees the eyes
+      currentMode = MODE_FACE;
+      needsRedraw = true;
+      msgShowing  = false;
+
+      // Notify backend; response may carry a fresh mood/message
+      sendArrived();
+    } else {
+      // Still sleeping: keep display dark to save power
+      display.clearDisplay();
+      display.display();
+    }
+    return;  // No further checks while sleeping
+  }
+
+  // ── AWAKE from here ───────────────────────────────────────────────────────
+
+  // ── Case 2: Personal space violation (< 10 cm) ────────────────────────────
+  bool inPersonalSpace = (currentDistanceCm > 0.0f &&
+                          currentDistanceCm < LIFE_ANGRY_DIST);
+
+  if (inPersonalSpace && !personalSpaceActive) {
+    // Enter personal-space state (one-shot)
+    personalSpaceActive = true;
+    Serial.println("[life] Personal space violated — ANGRY");
+    roboEyes.setMood(ANGRY);
+    roboEyes.anim_confused();  // Head-shake animation
+  } else if (!inPersonalSpace && personalSpaceActive) {
+    // Exit personal-space state — restore last known backend mood
+    personalSpaceActive = false;
+    Serial.println("[life] Personal space cleared — restoring mood");
+    applyMoodFromString(currentMood);
+  }
+
+  // ── Case 3: Check sleep condition (> 100 cm / absent for 5 min) ──────────
+  bool absentTooLong = (now - lastPresenceAt > SLEEP_TIMEOUT_MS);
+
+  if (absentTooLong) {
+    Serial.println("[life] SLEEP — absent for 5+ minutes");
+    lifeState = LIFE_SLEEPING;
+    roboEyes.setMood(TIRED);   // Drowsy eyes before display blanks
+    display.clearDisplay();
+    display.display();         // Blank the screen
+  }
+}
+
+// ─── FACE EXPRESSIONS (legacy — kept for non-RoboEyes mood display fallback) ─
 void drawFaceNeutral() {
   display.fillCircle(44, 24, 5, WHITE);  display.fillCircle(44, 24, 2, BLACK);
   display.fillCircle(84, 24, 5, WHITE);  display.fillCircle(84, 24, 2, BLACK);
@@ -365,21 +500,17 @@ void drawFaceNeutral() {
 }
 
 void drawFaceHappy() {
-  // Squint eyes
   display.drawLine(38, 24, 44, 19, WHITE); display.drawLine(44, 19, 50, 24, WHITE);
   display.drawLine(78, 24, 84, 19, WHITE); display.drawLine(84, 19, 90, 24, WHITE);
-  // U-shaped smile: center pixel lower than edges
   for (int i = -20; i <= 20; i++)
     display.drawPixel(64 + i, 50 - (i * i) / 30, WHITE);
 }
 
 void drawFaceExcited() {
-  // Star eyes
   display.drawLine(38, 24, 50, 24, WHITE); display.drawLine(44, 18, 44, 30, WHITE);
   display.drawLine(39, 19, 49, 29, WHITE); display.drawLine(49, 19, 39, 29, WHITE);
   display.drawLine(78, 24, 90, 24, WHITE); display.drawLine(84, 18, 84, 30, WHITE);
   display.drawLine(79, 19, 89, 29, WHITE); display.drawLine(89, 19, 79, 29, WHITE);
-  // Big double-line grin
   for (int i = -25; i <= 25; i++) {
     display.drawPixel(64 + i, 50 - (i * i) / 25, WHITE);
     display.drawPixel(64 + i, 51 - (i * i) / 25, WHITE);
@@ -389,11 +520,10 @@ void drawFaceExcited() {
 void drawFaceSurprised() {
   display.drawCircle(44, 24, 7, WHITE); display.fillCircle(44, 24, 3, WHITE);
   display.drawCircle(84, 24, 7, WHITE); display.fillCircle(84, 24, 3, WHITE);
-  display.drawCircle(64, 46, 7, WHITE);   // O-mouth
+  display.drawCircle(64, 46, 7, WHITE);
 }
 
 void drawFaceSleepy() {
-  // Half-closed eyes: fill circle then blank top half
   display.fillCircle(44, 26, 5, WHITE); display.fillRect(38, 21, 13, 5, BLACK);
   display.fillCircle(84, 26, 5, WHITE); display.fillRect(78, 21, 13, 5, BLACK);
   display.drawLine(52, 46, 76, 46, WHITE);
@@ -405,17 +535,15 @@ void drawFaceSleepy() {
 void drawFaceSad() {
   display.fillCircle(44, 26, 5, WHITE); display.fillCircle(44, 26, 2, BLACK);
   display.fillCircle(84, 26, 5, WHITE); display.fillCircle(84, 26, 2, BLACK);
-  // Tears
   display.drawLine(48, 30, 50, 38, WHITE);
   display.drawLine(88, 30, 90, 38, WHITE);
-  // Arch frown: center pixel higher than edges
   for (int i = -20; i <= 20; i++)
     display.drawPixel(64 + i, 42 + (i * i) / 30, WHITE);
 }
 
 void drawFaceCurious() {
-  display.drawLine(37, 18, 51, 14, WHITE);  // raised left brow
-  display.drawLine(77, 14, 91, 14, WHITE);  // flat right brow
+  display.drawLine(37, 18, 51, 14, WHITE);
+  display.drawLine(77, 14, 91, 14, WHITE);
   display.fillCircle(44, 24, 5, WHITE); display.fillCircle(44, 24, 2, BLACK);
   display.fillCircle(84, 24, 5, WHITE); display.fillCircle(84, 24, 2, BLACK);
   for (int i = -15; i <= 15; i++)
@@ -424,7 +552,6 @@ void drawFaceCurious() {
 }
 
 // ─── MODE: AI FACE ───────────────────────────────────────────────────────────
-// Redraws only when needsRedraw is set (mood change / boot).
 void drawModeFace() {
   display.clearDisplay();
   display.setTextColor(WHITE);
@@ -442,11 +569,6 @@ void drawModeFace() {
 }
 
 // ─── MODE: CLOCK ─────────────────────────────────────────────────────────────
-// Layout:
-//   y= 0  "-- CLOCK --"
-//   y= 9  horizontal rule
-//   y=14  HH:MM:SS  (textSize 2 → 16 px tall, 96 px wide, x=16)
-//   y=36  Mon, 20 Apr 2026  (textSize 1)
 void drawModeClock() {
   display.clearDisplay();
   display.setTextColor(WHITE);
@@ -460,7 +582,6 @@ void drawModeClock() {
     return;
   }
 
-  // Time — textSize 2: each char 12×16 px; "HH:MM:SS" = 8 chars = 96 px; x=16
   char timeBuf[9];
   strftime(timeBuf, sizeof(timeBuf), "%H:%M:%S", &t);
   display.setTextSize(2);
@@ -468,21 +589,14 @@ void drawModeClock() {
   display.print(timeBuf);
   display.setTextSize(1);
 
-  // Date below
   char dateBuf[20];
-  strftime(dateBuf, sizeof(dateBuf), "%a, %d %b %Y", &t);  // "Mon, 20 Apr 2026"
+  strftime(dateBuf, sizeof(dateBuf), "%a, %d %b %Y", &t);
   drawTextCentered(38, dateBuf);
 
   display.display();
 }
 
 // ─── MODE: DATE ──────────────────────────────────────────────────────────────
-// Layout:
-//   y= 0  "-- DATE --"
-//   y= 9  rule
-//   y=13  Monday
-//   y=24  20 April 2026
-//   y=36  HH:MM  (textSize 2 → 5 chars = 60 px, x=34)
 void drawModeDate() {
   display.clearDisplay();
   display.setTextColor(WHITE);
@@ -497,14 +611,13 @@ void drawModeDate() {
   }
 
   char dayName[12], dateStr[18], timeStr[6];
-  strftime(dayName,  sizeof(dayName),  "%A",         &t);  // "Monday"
-  strftime(dateStr,  sizeof(dateStr),  "%d %B %Y",   &t);  // "20 April 2026"
-  strftime(timeStr,  sizeof(timeStr),  "%H:%M",      &t);  // "14:30"
+  strftime(dayName,  sizeof(dayName),  "%A",         &t);
+  strftime(dateStr,  sizeof(dateStr),  "%d %B %Y",   &t);
+  strftime(timeStr,  sizeof(timeStr),  "%H:%M",      &t);
 
   drawTextCentered(13, dayName);
   drawTextCentered(24, dateStr);
 
-  // Large time — "HH:MM" = 5 chars × 12 px = 60 px; center x=(128-60)/2=34
   display.setTextSize(2);
   display.setCursor(34, 36);
   display.print(timeStr);
@@ -514,13 +627,6 @@ void drawModeDate() {
 }
 
 // ─── MODE: WEATHER ───────────────────────────────────────────────────────────
-// Layout:
-//   y= 0  "-- WEATHER --"
-//   y= 9  rule
-//   y=12  city name
-//   y=24  "23C"  (textSize 2, centered)
-//   y=45  condition text
-//   y=56  "LP: Refresh"
 void drawModeWeather() {
   display.clearDisplay();
   display.setTextColor(WHITE);
@@ -535,7 +641,6 @@ void drawModeWeather() {
     return;
   }
 
-  // Temperature (big) — dynamic width centering
   display.setTextSize(2);
   int tW = weatherTemp.length() * 12;
   display.setCursor((SCREEN_W - tW) / 2, 24);
@@ -548,12 +653,6 @@ void drawModeWeather() {
 }
 
 // ─── MODE: STOPWATCH ─────────────────────────────────────────────────────────
-// Layout:
-//   y= 0  "STOPWATCH"
-//   y= 9  rule
-//   y=14  MM:SS.cc  (textSize 2, x=16)
-//   y=36  [  RUNNING  ] / [  PAUSED  ] / [  STOPPED  ]
-//   y=54  LP action hint
 unsigned long swGetElapsed() {
   return (swState == SW_RUNNING) ? swAccum + (millis() - swStart) : swAccum;
 }
@@ -569,7 +668,6 @@ void drawModeStopwatch() {
   unsigned long secs  = (ms % 60000UL) / 1000UL;
   unsigned long cents = (ms % 1000UL)  / 10UL;
 
-  // "MM:SS.cc" = 8 chars × 12 px = 96 px; x=16
   char buf[9];
   snprintf(buf, sizeof(buf), "%02lu:%02lu.%02lu", mins, secs, cents);
   display.setTextSize(2);
@@ -614,25 +712,22 @@ void handleLongPress() {
   switch (currentMode) {
 
     case MODE_FACE:
-      // AI touch event
       sendTouch();
       break;
 
     case MODE_WEATHER:
-      // Force weather data refresh
       fetchWeather();
       needsRedraw = true;
       break;
 
     case MODE_STOPWATCH:
-      // Cycle: STOPPED→RUNNING | RUNNING→PAUSED | PAUSED→STOPPED(reset)
       if (swState == SW_STOPPED) {
         swStart = millis(); swAccum = 0; swState = SW_RUNNING;
         Serial.println("[sw] START");
       } else if (swState == SW_RUNNING) {
         swAccum += millis() - swStart; swState = SW_PAUSED;
         Serial.println("[sw] PAUSE");
-      } else {                          // PAUSED → reset
+      } else {
         swAccum = 0; swState = SW_STOPPED;
         Serial.println("[sw] RESET");
       }
@@ -640,7 +735,7 @@ void handleLongPress() {
       break;
 
     default:
-      break;  // CLOCK, DATE: no action
+      break;
   }
 }
 
@@ -653,6 +748,9 @@ void setup() {
   // Pins
   pinMode(LED_PIN,   OUTPUT);
   pinMode(TOUCH_PIN, INPUT);
+  pinMode(TRIG_PIN,  OUTPUT);
+  pinMode(ECHO_PIN,  INPUT);
+  digitalWrite(TRIG_PIN, LOW);  // Ensure trigger is idle
 
   // OLED init
   Wire.begin(OLED_SDA, OLED_SCL);
@@ -660,17 +758,11 @@ void setup() {
     Serial.println("OLED FAIL — halting");
     while (true) {}
   }
- // Double-clear flushes any garbage left in SSD1306 GDDRAM after boot
+  // Double-clear flushes any garbage left in SH1106 GDDRAM after boot
   display.clearDisplay();
-    // Initialize RoboEyes with your screen dimensions and a target framerate (e.g., 100 FPS)
+  // Initialize RoboEyes
   roboEyes.begin(SCREEN_W, SCREEN_H, 100);
-
-  // Start the autoblinker. Parameters: (ON/OFF, interval in seconds, variation in seconds)
-  // This blinks both eyes randomly around every 3 seconds (+/- 2 seconds).
   roboEyes.setAutoblinker(true, 3, 2);
-
-  // Start idle mode. Parameters: (ON/OFF, interval in seconds, variation in seconds)
-  // This randomly repositions both eyes so XenoAI "looks around" the room.
   roboEyes.setIdleMode(true, 4, 2);
   display.display();
   delay(50);
@@ -689,20 +781,24 @@ void setup() {
   display.clearDisplay();
   drawTextCentered(22, "Syncing time...");
   display.display();
-  delay(2000);  // Allow NTP server response; subsequent getTime() is instant
+  delay(2000);
 
   // OTA
   setupOTA();
 
-  // Initial weather fetch (blocking, acceptable in setup)
+  // Initial weather fetch (blocking — acceptable in setup)
   display.clearDisplay();
   drawTextCentered(22, "Fetching weather");
   display.display();
   fetchWeather();
   lastWeatherAt = millis();
 
-  // Touch interrupt — CHANGE to detect both press and release
+  // Touch interrupt — CHANGE detects both press and release
   attachInterrupt(digitalPinToInterrupt(TOUCH_PIN), onTouchChange, CHANGE);
+
+  // Life state init — mark "present" so device doesn't sleep immediately on boot
+  lastPresenceAt   = millis();
+  lastUltrasonicAt = millis();
 
   // Ready splash
   display.clearDisplay();
@@ -714,21 +810,36 @@ void setup() {
 
   // Initial AI state
   currentMood = "happy";
+  applyMoodFromString(currentMood);
   lastStateAt = millis();
   needsRedraw = true;
   Serial.println("Boot complete.");
 }
 
 // ─── MAIN LOOP ───────────────────────────────────────────────────────────────
-// ─── MAIN LOOP ───────────────────────────────────────────────────────────────
 void loop() {
   ArduinoOTA.handle();
   unsigned long now = millis();
 
+  // ── HC-SR04: fire trigger every 500 ms ────────────────────────────────────
+  // pulseIn() has a hard 20 ms ceiling — worst-case adds ~20 ms latency
+  // once per 500 ms, which is imperceptible to roboEyes at 100 fps.
+  if (now - lastUltrasonicAt >= US_FIRE_INTERVAL) {
+    lastUltrasonicAt = now;
+    fireUltrasonic();
+    // Evaluate life behaviours immediately after each fresh reading
+    handleLifeLogic(now);
+  }
+
+  // ── If sleeping, skip all UI/backend logic (display already blanked) ───────
+  if (lifeState == LIFE_SLEEPING) {
+    return;
+  }
+
   // ── Touch: tap → cycle mode (or dismiss message) ──────────────────────────
   if (tapFlag) {
     tapFlag = false;
-    if (now - lastTouchAt > 300) {   // 300 ms inter-tap debounce
+    if (now - lastTouchAt > 300) {
       lastTouchAt = now;
       if (msgShowing) { msgShowing = false; needsRedraw = true; }
       else            { cycleMode(); }
@@ -765,18 +876,17 @@ void loop() {
 
   // ── Display update ────────────────────────────────────────────────────────
   if (msgShowing) {
-    // Message panel overrides all mode displays
     if (needsRedraw) { drawMessage(); needsRedraw = false; }
     return;
   }
 
-  // ── ROBOEYES UPDATE ───────────────────────────────────────────────────────
-  // Continuously calculate and draw the animation state if Face mode is active
+  // ── RoboEyes update — must run every loop() iteration in FACE mode ────────
+  // This drives blinking, idle gaze, and mood animations at the target FPS.
   if (currentMode == MODE_FACE) {
-      roboEyes.update();
+    roboEyes.update();
   }
 
-  // All other modes: redraw on state change or 200 ms timer (live clock / stopwatch).
+  // All other modes: redraw on state change or every 200 ms (live clock/stopwatch).
   bool shouldRedraw = needsRedraw;
   if (!shouldRedraw && currentMode != MODE_FACE) {
     shouldRedraw = (now - lastDisplayAt > DISPLAY_INTERVAL);
@@ -786,7 +896,7 @@ void loop() {
     lastDisplayAt = now;
     needsRedraw   = false;
     switch (currentMode) {
-      case MODE_FACE:      /* Handled continuously by roboEyes.update() above */ break;
+      case MODE_FACE:      /* roboEyes.update() above handles rendering */  break;
       case MODE_CLOCK:     drawModeClock();     break;
       case MODE_DATE:      drawModeDate();      break;
       case MODE_WEATHER:   drawModeWeather();   break;
