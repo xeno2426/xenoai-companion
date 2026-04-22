@@ -376,10 +376,6 @@ void fireIdleAnimation() {
   Serial.printf("[idle] anim %d, next in %lus\n", idleAnimIndex, idleAnimInterval / 1000);
 }
 
-// ─── LIFE STATE MACHINE ───────────────────────────────────────────────────────
-void handleLifeLogic(unsigned long now) {
-  bool present = (currentDistanceCm > 0.0f && currentDistanceCm <= LIFE_PRESENCE_DIST);
-  if (present) lastPresenceAt = now;
 
 // ─── SLEEP ANIMATION ─────────────────────────────────────────────────────────
 // Shows half-lidded eyes + floating ZZZ bubbles. Called every loop() while sleeping.
@@ -428,6 +424,11 @@ void drawSleepAnimation() {
 
   display.display();
 }
+
+// ─── LIFE STATE MACHINE ───────────────────────────────────────────────────────
+void handleLifeLogic(unsigned long now) {
+  bool present = (currentDistanceCm > 0.0f && currentDistanceCm <= LIFE_PRESENCE_DIST);
+  if (present) lastPresenceAt = now;
 
   // ── SLEEPING / GOING_SLEEP ────────────────────────────────────────────────
   if (lifeState == LIFE_GOING_SLEEP) {
