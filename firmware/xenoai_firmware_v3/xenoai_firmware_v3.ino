@@ -162,6 +162,13 @@ volatile unsigned long touchDownAt   = 0;
 volatile bool          touchActive   = false;
 unsigned long          lastTouchAt   = 0;
 
+// Sleep animation state
+unsigned long lastSleepAnimAt  = 0;
+uint8_t       sleepZzzStage    = 0;    // 0=idle, 1=small z, 2=med z, 3=big Z
+uint8_t       sleepEyeDroop    = 0;    // 0–5 droop level for closing animation
+unsigned long sleepEyeAt       = 0;
+
+
 void IRAM_ATTR onTouchChange() {
   if (digitalRead(TOUCH_PIN) == HIGH) {
     touchDownAt = millis();
@@ -374,6 +381,54 @@ void handleLifeLogic(unsigned long now) {
   bool present = (currentDistanceCm > 0.0f && currentDistanceCm <= LIFE_PRESENCE_DIST);
   if (present) lastPresenceAt = now;
 
+// ─── SLEEP ANIMATION ─────────────────────────────────────────────────────────
+// Shows half-lidded eyes + floating ZZZ bubbles. Called every loop() while sleeping.
+// Uses millis() timers internally — no delay().
+void drawSleepAnimation() {
+  unsigned long now = millis();
+  display.clearDisplay();
+
+  // ── Half-lidded droopy eyes ───────────────────────────────────────────────
+  // Left eye
+  display.fillCircle(38, 32, 10, WHITE);
+  display.fillRect(28, 22, 21, 12, BLACK);   // mask top half = droopy lid
+  display.drawLine(28, 32, 48, 32, WHITE);   // lid edge line
+  // Right eye
+  display.fillCircle(90, 32, 10, WHITE);
+  display.fillRect(80, 22, 21, 12, BLACK);
+  display.drawLine(80, 32, 100, 32, WHITE);
+
+  // ── ZZZ bubble sequence (fires every 3s, 3-stage cascade) ────────────────
+  if (now - lastSleepAnimAt > 3000) {
+    lastSleepAnimAt = now;
+    sleepZzzStage   = 1;
+  }
+
+  // Each stage lingers 700ms then advances
+  static unsigned long stageAt = 0;
+  if (sleepZzzStage > 0 && now - stageAt > 700) {
+    stageAt = now;
+    sleepZzzStage++;
+    if (sleepZzzStage > 3) sleepZzzStage = 0;
+  }
+
+  // Draw accumulated Z's (each stage adds one, growing in size + position)
+  if (sleepZzzStage >= 1) {
+    display.setTextSize(1); display.setTextColor(WHITE);
+    display.setCursor(100, 28); display.print("z");
+  }
+  if (sleepZzzStage >= 2) {
+    display.setTextSize(1);
+    display.setCursor(107, 20); display.print("z");
+  }
+  if (sleepZzzStage >= 3) {
+    display.setTextSize(2);
+    display.setCursor(112, 10); display.print("Z");
+  }
+
+  display.display();
+}
+
   // ── SLEEPING / GOING_SLEEP ────────────────────────────────────────────────
   if (lifeState == LIFE_GOING_SLEEP) {
     if (now - sleepTransitionAt >= SLEEP_ANIM_MS) {
@@ -390,7 +445,6 @@ void handleLifeLogic(unsigned long now) {
     if (currentDistanceCm > 0.0f && currentDistanceCm < LIFE_WAKE_DIST) {
       Serial.println("[life] WAKE");
       lifeState           = LIFE_AWAKE;
-      sleepDisplayBlanked = false;
       personalSpaceZone   = 0;
       lastPresenceAt      = now;
       lastIdleAnimAt      = now;   // prevent instant idle anim on wake
@@ -716,11 +770,15 @@ void loop() {
   }
 
   // ── Sleep / going-to-sleep: drive RoboEyes during transition, then stop ───
-  if (lifeState == LIFE_GOING_SLEEP) {
-    roboEyes.update();   // show TIRED eyes during 1.5s transition
+if (lifeState == LIFE_GOING_SLEEP) {
+    roboEyes.update();   // TIRED eyes during 1.5s wind-down
     return;
   }
-  if (lifeState == LIFE_SLEEPING) return;  // display already blank, do nothing
+  if (lifeState == LIFE_SLEEPING) {
+    drawSleepAnimation();  // animated ZZZ instead of blank screen
+    delay(30);             // ~33fps cap — no need to burn cycles on sleep anim
+    return;
+  }
 
   // ── Touch: FIX — flag cleared only when debounce passes ──────────────────
   if (tapFlag && now - lastTouchAt > 300) {
