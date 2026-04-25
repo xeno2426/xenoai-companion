@@ -32,28 +32,32 @@ jobs:
 
       # ── 2. Install arduino-cli ──────────────────────────────────
       - name: Install arduino-cli
-        run: |
+        
+          run: |
           curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh \
             | BINDIR=/usr/local/bin sh
           arduino-cli version
 
       # ── 3. Add ESP32 board index ────────────────────────────────
       - name: Add ESP32 board manager URL
-        run: |
+        
+          run: |
           arduino-cli config init
           arduino-cli config add board_manager.additional_urls \
             https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
 
       # ── 4. Install ESP32 core ───────────────────────────────────
       - name: Install ESP32 core
-        run: |
+        
+          run: |
           arduino-cli core update-index
           arduino-cli core install esp32:esp32
           arduino-cli core list
 
       # ── 5. Install required libraries ───────────────────────────
       - name: Install Arduino libraries
-        run: |
+        
+          run: |
           arduino-cli lib install "Adafruit SH110X"
           arduino-cli lib install "Adafruit GFX Library"
           arduino-cli lib install "Adafruit BusIO"
@@ -70,7 +74,9 @@ jobs:
           TWILIO_AUTH_TOKEN:  ${{ secrets.TWILIO_AUTH_TOKEN }}
           TWILIO_FROM_NUMBER: ${{ secrets.TWILIO_FROM_NUMBER }}
           ALERT_TO_NUMBER:    ${{ secrets.ALERT_TO_NUMBER }}
-        run: |
+        
+          run: |
+          mkdir -p ./xenoai_firmware_v3
           cat > ./xenoai_firmware_v3/secrets.h << EOF
           #pragma once
           #define WIFI_SSID          "${WIFI_SSID}"
@@ -91,7 +97,8 @@ jobs:
       #    XIAO ESP32-S3    →  esp32:esp32:XIAO_ESP32S3
       #
       - name: Compile sketch
-        run: |
+        
+          run: |
           arduino-cli compile \
             --fqbn esp32:esp32:esp32s3 \
             --output-dir ./build \
