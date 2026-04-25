@@ -1,18 +1,85 @@
-name: Build Firmware
-on: [push]
+# ╔══════════════════════════════════════════════════════════════════╗
+# ║  .github/workflows/build.yml                                    ║
+# ║  Compiles xenoai_firmware_v3.ino → .ino.bin via arduino-cli    ║
+# ║                                                                  ║
+# ║  Triggers : push / PR to main, or manual dispatch               ║
+# ║  Output   : GitHub Actions artifact  "xenoai_firmware_v3_bin"  ║
+# ╚══════════════════════════════════════════════════════════════════╝
+
+name: Build XenoAI Firmware v3
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:          # lets you trigger a build from the GitHub UI
+
 jobs:
   build:
+    name: Compile for ESP32
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: arduino/setup-arduino-cli@v1
-      - run: |
+      # ── 1. Checkout ─────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Install arduino-cli ──────────────────────────────────
+      - name: Install arduino-cli
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh \
+            | BINDIR=/usr/local/bin sh
+          arduino-cli version
+
+      # ── 3. Add ESP32 board index ────────────────────────────────
+      - name: Add ESP32 board manager URL
+        run: |
+          arduino-cli config init
+          arduino-cli config add board_manager.additional_urls \
+            https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
+
+      # ── 4. Install ESP32 core ───────────────────────────────────
+      - name: Install ESP32 core
+        run: |
+          arduino-cli core update-index
           arduino-cli core install esp32:esp32
-          arduino-cli lib install "Adafruit SH110X" "FluxGarage RoboEyes" "Adafruit GFX Library" "ArduinoJson"
-          arduino-cli compile --fqbn esp32:esp32:esp32s3 \
-            firmware/xenoai_firmware_v3/xenoai_firmware_v3.ino \
-            --output-dir build/
-      - uses: actions/upload-artifact@v4
+          arduino-cli core list
+
+      # ── 5. Install required libraries ───────────────────────────
+      - name: Install Arduino libraries
+        run: |
+          arduino-cli lib install "Adafruit SH110X"
+          arduino-cli lib install "Adafruit GFX Library"
+          arduino-cli lib install "Adafruit BusIO"
+          arduino-cli lib list
+
+      # ── 6. Compile sketch ───────────────────────────────────────
+      #
+      #  FQBN options — change to match your exact board:
+      #    ESP32 generic          →  esp32:esp32:esp32
+      #    ESP32-S3 DevKit        →  esp32:esp32:esp32s3
+      #    ESP32-C3               →  esp32:esp32:esp32c3
+      #    XIAO ESP32-S3          →  esp32:esp32:XIAO_ESP32S3
+      #
+      - name: Compile sketch
+        run: |
+          arduino-cli compile \
+            --fqbn esp32:esp32:esp32s3 \
+            --output-dir ./build \
+            --warnings all \
+            ./xenoai_firmware_v3
+          echo "── Build output ──────────────────────────────"
+          ls -lh ./build/
+
+      # ── 7. Upload .bin as a downloadable artifact ───────────────
+      - name: Upload firmware binary
+        uses: actions/upload-artifact@v4
         with:
-          name: firmware-bin
-          path: build/
+          name: xenoai_firmware_v3_bin
+          path: |
+            ./build/xenoai_firmware_v3.ino.bin
+            ./build/xenoai_firmware_v3.ino.bootloader.bin
+            ./build/xenoai_firmware_v3.ino.partitions.bin
+          if-no-files-found: error
+          retention-days: 30
