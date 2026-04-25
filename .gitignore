@@ -1,0 +1,13 @@
+# ── Secrets — NEVER push these ───────────────────────────────────
+secrets.h
+**/secrets.h
+
+# ── Build output ─────────────────────────────────────────────────
+build/
+*.bin
+*.elf
+*.map
+
+# ── Arduino / OS junk ────────────────────────────────────────────
+.DS_Store
+Thumbs.db
