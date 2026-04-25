@@ -12,15 +12,9 @@
 #include <HTTPClient.h>
 
 // ──────────────────────────────────────────────────────────────────
-//  USER CONFIG  ← fill these in before flashing
+//  SECRETS  ← loaded from secrets.h  (never commit that file!)
 // ──────────────────────────────────────────────────────────────────
-#define WIFI_SSID           "Redmi 9i"
-#define WIFI_PASSWORD       "strawberry"
-
-#define TWILIO_ACCOUNT_SID  "ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-#define TWILIO_AUTH_TOKEN   "your_twilio_auth_token"
-#define TWILIO_FROM_NUMBER  "+1XXXXXXXXXX"   // Your Twilio number
-#define ALERT_TO_NUMBER     "+1XXXXXXXXXX"   // Your personal number
+#include "secrets.h"
 
 // ──────────────────────────────────────────────────────────────────
 //  HARDWARE PINS
