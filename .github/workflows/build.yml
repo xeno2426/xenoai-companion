@@ -4,6 +4,11 @@
 # ║                                                                  ║
 # ║  Triggers : push / PR to main, or manual dispatch               ║
 # ║  Output   : GitHub Actions artifact  "xenoai_firmware_v3_bin"  ║
+# ║                                                                  ║
+# ║  Secrets needed (Repo → Settings → Secrets → Actions):         ║
+# ║    WIFI_SSID, WIFI_PASSWORD                                     ║
+# ║    TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN                        ║
+# ║    TWILIO_FROM_NUMBER, ALERT_TO_NUMBER                          ║
 # ╚══════════════════════════════════════════════════════════════════╝
 
 name: Build XenoAI Firmware v3
@@ -13,7 +18,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  workflow_dispatch:          # lets you trigger a build from the GitHub UI
+  workflow_dispatch:
 
 jobs:
   build:
@@ -54,13 +59,36 @@ jobs:
           arduino-cli lib install "Adafruit BusIO"
           arduino-cli lib list
 
-      # ── 6. Compile sketch ───────────────────────────────────────
+      # ── 6. Generate secrets.h from GitHub Repository Secrets ────
+      #  Never stored in the repo — generated fresh on every run.
+      #  Add each one at: Repo → Settings → Secrets → Actions → New
+      - name: Generate secrets.h
+        env:
+          WIFI_SSID:          ${{ secrets.WIFI_SSID }}
+          WIFI_PASSWORD:      ${{ secrets.WIFI_PASSWORD }}
+          TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
+          TWILIO_AUTH_TOKEN:  ${{ secrets.TWILIO_AUTH_TOKEN }}
+          TWILIO_FROM_NUMBER: ${{ secrets.TWILIO_FROM_NUMBER }}
+          ALERT_TO_NUMBER:    ${{ secrets.ALERT_TO_NUMBER }}
+        run: |
+          cat > ./xenoai_firmware_v3/secrets.h << EOF
+          #pragma once
+          #define WIFI_SSID          "${WIFI_SSID}"
+          #define WIFI_PASSWORD      "${WIFI_PASSWORD}"
+          #define TWILIO_ACCOUNT_SID "${TWILIO_ACCOUNT_SID}"
+          #define TWILIO_AUTH_TOKEN  "${TWILIO_AUTH_TOKEN}"
+          #define TWILIO_FROM_NUMBER "${TWILIO_FROM_NUMBER}"
+          #define ALERT_TO_NUMBER    "${ALERT_TO_NUMBER}"
+          EOF
+          echo "secrets.h generated successfully."
+
+      # ── 7. Compile sketch ───────────────────────────────────────
       #
       #  FQBN options — change to match your exact board:
-      #    ESP32 generic          →  esp32:esp32:esp32
-      #    ESP32-S3 DevKit        →  esp32:esp32:esp32s3
-      #    ESP32-C3               →  esp32:esp32:esp32c3
-      #    XIAO ESP32-S3          →  esp32:esp32:XIAO_ESP32S3
+      #    ESP32 generic    →  esp32:esp32:esp32
+      #    ESP32-S3 DevKit  →  esp32:esp32:esp32s3
+      #    ESP32-C3         →  esp32:esp32:esp32c3
+      #    XIAO ESP32-S3    →  esp32:esp32:XIAO_ESP32S3
       #
       - name: Compile sketch
         run: |
@@ -72,7 +100,7 @@ jobs:
           echo "── Build output ──────────────────────────────"
           ls -lh ./build/
 
-      # ── 7. Upload .bin as a downloadable artifact ───────────────
+      # ── 8. Upload .bin as a downloadable artifact ───────────────
       - name: Upload firmware binary
         uses: actions/upload-artifact@v4
         with:
