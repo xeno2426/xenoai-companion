@@ -1,7 +1,7 @@
 // ╔══════════════════════════════════════════════════════════════════╗
-// ║              xenoai_firmware_v3.ino                             ║
-// ║  ESP32  ·  OLED SSD1306  ·  Touch Sensor  ·  HC-SR04           ║
-// ║  Sends a Twilio SMS when object < 15 cm is detected             ║
+// ║              xenoai_firmware_v3.ino                              ║
+// ║  ESP32-S3 · OLED SSD1306 · Touch Sensor · HC-SR04                ║
+// ║  Sends a Twilio SMS when object < 15 cm is detected              ║
 // ╚══════════════════════════════════════════════════════════════════╝
 
 #include <Wire.h>
@@ -69,9 +69,6 @@ void setup() {
   initOLED();
   connectWiFi();
 
-  Serial.println("[XenoAI v3] Ready.");
-}
-
   // --- OTA Setup ---
   ArduinoOTA.setPort(3232);
   ArduinoOTA.setPassword("xenoai123");
@@ -88,17 +85,16 @@ void setup() {
 
   ArduinoOTA.begin();
   Serial.println("[OTA] Ready.");
+  Serial.println("[XenoAI v3] Ready.");
+}
 
 // ══════════════════════════════════════════════════════════════════
 //  MAIN LOOP
 // ══════════════════════════════════════════════════════════════════
 void loop() {
-  // Listen for OTA update requests
+  // Listen for OTA updates over Wi-Fi
   ArduinoOTA.handle();
 
-  float dist    = measureDistance();
-  // ... rest of your existing loop code ...
-  
   float dist    = measureDistance();
   bool  touched = isTouched();
 
@@ -123,7 +119,6 @@ void loop() {
 
 // ══════════════════════════════════════════════════════════════════
 //  connectWiFi()
-//  Attempts connection for up to 15 s; continues offline if it fails
 // ══════════════════════════════════════════════════════════════════
 void connectWiFi() {
   Serial.print("[WiFi] Connecting");
@@ -145,11 +140,9 @@ void connectWiFi() {
 
 // ══════════════════════════════════════════════════════════════════
 //  initOLED()
-//  Starts I²C on custom pins and boots SSD1306 with a splash screen
 // ══════════════════════════════════════════════════════════════════
 void initOLED() {
   Wire.begin(I2C_SDA, I2C_SCL);
-
   if (!display.begin(OLED_ADDR, true)) {
     Serial.println("[OLED] Init FAILED — check wiring/address");
     return;
@@ -157,8 +150,6 @@ void initOLED() {
 
   display.clearDisplay();
   display.setTextColor(SH110X_WHITE);
-
-  // Splash screen
   display.setTextSize(2);
   display.setCursor(14, 10);
   display.println("XenoAI");
@@ -175,42 +166,33 @@ void initOLED() {
 
 // ══════════════════════════════════════════════════════════════════
 //  initSensors()
-//  Configures GPIO directions for HC-SR04 and touch sensor
 // ══════════════════════════════════════════════════════════════════
 void initSensors() {
   pinMode(TRIG_PIN,  OUTPUT);
   pinMode(ECHO_PIN,  INPUT);
   pinMode(TOUCH_PIN, INPUT);
-  digitalWrite(TRIG_PIN, LOW); // Ensure TRIG starts LOW
+  digitalWrite(TRIG_PIN, LOW); 
   Serial.println("[Sensors] Pins initialised.");
 }
 
 // ══════════════════════════════════════════════════════════════════
 //  measureDistance()
-//  Returns distance in cm using HC-SR04 echo timing.
-//  Returns -1.0 if no echo received (out of range / timeout).
-//  ECHO is read through the 1k/2k voltage divider → safe for 3.3 V
 // ══════════════════════════════════════════════════════════════════
 float measureDistance() {
-  // Send 10 µs trigger pulse
   digitalWrite(TRIG_PIN, LOW);
   delayMicroseconds(2);
   digitalWrite(TRIG_PIN, HIGH);
   delayMicroseconds(10);
   digitalWrite(TRIG_PIN, LOW);
 
-  // Measure echo pulse width (timeout = 30 000 µs ≈ 5 m max range)
   long duration = pulseIn(ECHO_PIN, HIGH, 30000UL);
   if (duration == 0) return -1.0f;
 
-  // Distance = (duration × speed-of-sound) / 2
-  // Speed of sound ≈ 0.0343 cm/µs at 20 °C
   return (duration * 0.0343f) / 2.0f;
 }
 
 // ══════════════════════════════════════════════════════════════════
 //  isTouched()
-//  Returns true when the capacitive touch sensor output is HIGH
 // ══════════════════════════════════════════════════════════════════
 bool isTouched() {
   return digitalRead(TOUCH_PIN) == HIGH;
@@ -218,17 +200,14 @@ bool isTouched() {
 
 // ══════════════════════════════════════════════════════════════════
 //  updateDisplay()
-//  Renders a 4-row status screen on the 128×64 OLED
 // ══════════════════════════════════════════════════════════════════
 void updateDisplay(float dist, bool touched, bool alert) {
   display.clearDisplay();
   display.setTextSize(1);
 
-  // ── Row 0 : header ──────────────────────────────────────────────
   display.setCursor(16, 0);
   display.println("[ XenoAI  v3 ]");
 
-  // ── Row 1 : distance ────────────────────────────────────────────
   display.setCursor(0, 16);
   display.print("Dist : ");
   if (dist < 0.0f) {
@@ -237,12 +216,10 @@ void updateDisplay(float dist, bool touched, bool alert) {
     display.printf("%.1f cm", dist);
   }
 
-  // ── Row 2 : touch ───────────────────────────────────────────────
   display.setCursor(0, 28);
   display.print("Touch: ");
   display.println(touched ? "ACTIVE" : "---   ");
 
-  // ── Row 3 : alert / status ──────────────────────────────────────
   display.setCursor(0, 42);
   if (alert) {
     display.println("> SMS SENT! <");
@@ -252,7 +229,6 @@ void updateDisplay(float dist, bool touched, bool alert) {
     display.println("Status : OK");
   }
 
-  // ── Row 4 : WiFi indicator ──────────────────────────────────────
   display.setCursor(0, 56);
   display.print(WiFi.status() == WL_CONNECTED ? "WiFi:[OK]" : "WiFi:[--]");
 
@@ -261,8 +237,6 @@ void updateDisplay(float dist, bool touched, bool alert) {
 
 // ══════════════════════════════════════════════════════════════════
 //  sendSMSAlert()
-//  POSTs a Twilio message via HTTPS.
-//  Returns true on HTTP 201 Created, false on any failure.
 // ══════════════════════════════════════════════════════════════════
 bool sendSMSAlert(float dist) {
   if (WiFi.status() != WL_CONNECTED) {
@@ -271,13 +245,13 @@ bool sendSMSAlert(float dist) {
   }
 
   WiFiClientSecure client;
-  client.setInsecure(); // Accept any TLS cert (suitable for IoT devices)
+  client.setInsecure(); 
 
   HTTPClient http;
   String url  = "https://api.twilio.com/2010-04-01/Accounts/";
   url += TWILIO_ACCOUNT_SID;
   url += "/Messages.json";
-
+  
   if (!http.begin(client, url)) {
     Serial.println("[SMS] http.begin() failed.");
     return false;
@@ -285,7 +259,7 @@ bool sendSMSAlert(float dist) {
 
   http.setAuthorization(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN);
   http.addHeader("Content-Type", "application/x-www-form-urlencoded");
-
+  
   String body  = "To=";
   body += ALERT_TO_NUMBER;
   body += "&From=";
@@ -296,7 +270,7 @@ bool sendSMSAlert(float dist) {
 
   int httpCode = http.POST(body);
   http.end();
-
+  
   if (httpCode == 201) {
     Serial.printf("[SMS] Sent! Twilio responded: %d\n", httpCode);
     return true;
@@ -305,3 +279,4 @@ bool sendSMSAlert(float dist) {
     return false;
   }
 }
+
