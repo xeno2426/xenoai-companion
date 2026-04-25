@@ -10,6 +10,8 @@
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
+#include <ArduinoOTA.h>
+#include <ESPmDNS.h>
 
 // ──────────────────────────────────────────────────────────────────
 //  SECRETS  ← loaded from secrets.h  (never commit that file!)
@@ -70,10 +72,33 @@ void setup() {
   Serial.println("[XenoAI v3] Ready.");
 }
 
+  // --- OTA Setup ---
+  ArduinoOTA.setPort(3232);
+  ArduinoOTA.setPassword("xenoai123");
+  
+  ArduinoOTA.onStart([]() {
+    Serial.println("\n[OTA] Starting update...");
+  });
+  ArduinoOTA.onEnd([]() {
+    Serial.println("\n[OTA] Update finished.");
+  });
+  ArduinoOTA.onError([](ota_error_t error) {
+    Serial.printf("[OTA] Error[%u]: ", error);
+  });
+
+  ArduinoOTA.begin();
+  Serial.println("[OTA] Ready.");
+
 // ══════════════════════════════════════════════════════════════════
 //  MAIN LOOP
 // ══════════════════════════════════════════════════════════════════
 void loop() {
+  // Listen for OTA update requests
+  ArduinoOTA.handle();
+
+  float dist    = measureDistance();
+  // ... rest of your existing loop code ...
+  
   float dist    = measureDistance();
   bool  touched = isTouched();
 
