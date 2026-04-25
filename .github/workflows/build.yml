@@ -67,8 +67,8 @@ jobs:
           TWILIO_FROM_NUMBER: ${{ secrets.TWILIO_FROM_NUMBER }}
           ALERT_TO_NUMBER:    ${{ secrets.ALERT_TO_NUMBER }}
         run: |
-          mkdir -p ./xenoai_firmware_v3
-          cat > ./xenoai_firmware_v3/secrets.h << EOF
+          mkdir -p ./firmware/xenoai_firmware_v3
+          cat > ./firmware/xenoai_firmware_v3/secrets.h << EOF
           #pragma once
           #define WIFI_SSID          "${WIFI_SSID}"
           #define WIFI_PASSWORD      "${WIFI_PASSWORD}"
@@ -87,7 +87,7 @@ jobs:
       #    XIAO ESP32-S3    →  esp32:esp32:XIAO_ESP32S3
       - name: Compile sketch
         run: |
-          arduino-cli compile --fqbn esp32:esp32:esp32s3 --output-dir ./build --warnings all ./xenoai_firmware_v3
+          arduino-cli compile --fqbn esp32:esp32:esp32s3 --output-dir ./build --warnings all ./firmware/xenoai_firmware_v3
           echo "── Build output ──────────────────────────────"
           ls -lh ./build/
 
