@@ -22,7 +22,7 @@
 #define SCREEN_WIDTH  128
 #define SCREEN_HEIGHT 64
 Adafruit_SH1106G display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
-roboEyes roboEyes;  // patched library uses SH1106G
+RoboEyes roboEyes(display);  // patched library uses SH1106G
 
 // ---------- Pins ----------
 #define PIN_SDA       8
