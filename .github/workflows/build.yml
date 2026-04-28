@@ -15,8 +15,8 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      SKETCH_DIR: xenoai-companion/firmware/xenoai_companion_v3
-      SKETCH_NAME: xenoai_companion_v3.ino
+      SKETCH_DIR: firmware/xenoai_firmware_v3
+      SKETCH_NAME: xenoai_firmware_v3.ino
       FQBN: esp32:esp32:esp32s3:PSRAM=opi,FlashSize=8M,PartitionScheme=default_8MB,CDCOnBoot=cdc,USBMode=hwcdc
 
     steps:
