@@ -690,7 +690,7 @@ void render(uint32_t now) {
     }
   }
 
-  PRIORITY 4: Mode rendering
+  // PRIORITY 4: Mode rendering
   switch (appMode) {
     case MODE_FACE:
       // RoboEyes drives the screen each loop iteration
