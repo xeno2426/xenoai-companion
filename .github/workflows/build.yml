@@ -3,11 +3,11 @@ name: Build XenoAI Firmware
 on:
   push:
     paths:
-      - 'xenoai-companion/firmware/**'
+      - 'firmware/**'
       - '.github/workflows/build.yml'
   pull_request:
     paths:
-      - 'xenoai-companion/firmware/**'
+      - 'firmware/**'
   workflow_dispatch:
 
 jobs:
@@ -39,6 +39,7 @@ jobs:
           arduino-cli lib install "Adafruit SH110X"
           arduino-cli lib install "Adafruit BusIO"
           arduino-cli lib install "ArduinoJson"
+
       - name: Install FluxGarage RoboEyes (from GitHub)
         run: |
           mkdir -p "$HOME/Arduino/libraries"
@@ -87,7 +88,7 @@ jobs:
       - name: Upload firmware artifact
         uses: actions/upload-artifact@v4
         with:
-          name: xenoai_companion_v3-firmware
+          name: xenoai_firmware_v3
           path: release/*
           if-no-files-found: error
           retention-days: 90
@@ -97,3 +98,4 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: release/*
+          
