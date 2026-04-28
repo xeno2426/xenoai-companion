@@ -38,8 +38,7 @@ jobs:
           arduino-cli lib install "Adafruit GFX Library"
           arduino-cli lib install "Adafruit SH110X"
           arduino-cli lib install "Adafruit BusIO"
-          arduino-cli lib install "ArduinoJson@^7.0.0"
-
+          arduino-cli lib install "ArduinoJson"
       - name: Install FluxGarage RoboEyes (from GitHub)
         run: |
           mkdir -p "$HOME/Arduino/libraries"
