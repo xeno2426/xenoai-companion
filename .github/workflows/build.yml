@@ -1,104 +1,100 @@
-# ╔══════════════════════════════════════════════════════════════════╗
-# ║  .github/workflows/build.yml                                    ║
-# ║  Compiles xenoai_firmware_v3.ino → .ino.bin via arduino-cli    ║
-# ║                                                                  ║
-# ║  Triggers : push / PR to main, or manual dispatch               ║
-# ║  Output   : GitHub Actions artifact  "xenoai_firmware_v3_bin"  ║
-# ║                                                                  ║
-# ║  Secrets needed (Repo → Settings → Secrets → Actions):         ║
-# ║    WIFI_SSID, WIFI_PASSWORD                                     ║
-# ║    TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN                        ║
-# ║    TWILIO_FROM_NUMBER, ALERT_TO_NUMBER                          ║
-# ╚══════════════════════════════════════════════════════════════════╝
-
-name: Build XenoAI Firmware v3
+name: Build XenoAI Firmware
 
 on:
   push:
-    branches: [main]
+    paths:
+      - 'xenoai-companion/firmware/**'
+      - '.github/workflows/build.yml'
   pull_request:
-    branches: [main]
+    paths:
+      - 'xenoai-companion/firmware/**'
   workflow_dispatch:
 
 jobs:
   build:
-    name: Compile for ESP32
     runs-on: ubuntu-latest
 
+    env:
+      SKETCH_DIR: xenoai-companion/firmware/xenoai_companion_v3
+      SKETCH_NAME: xenoai_companion_v3.ino
+      FQBN: esp32:esp32:esp32s3:PSRAM=opi,FlashSize=8M,PartitionScheme=default_8MB,CDCOnBoot=cdc,USBMode=hwcdc
+
     steps:
-      # ── 1. Checkout ─────────────────────────────────────────────
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ── 2. Install arduino-cli ──────────────────────────────────
-      - name: Install arduino-cli
-        run: |
-          curl -fsSL https://raw.githubusercontent.com/arduino/arduino-cli/master/install.sh | BINDIR=/usr/local/bin sh
-          arduino-cli version
+      - name: Setup Arduino CLI
+        uses: arduino/setup-arduino-cli@v2
 
-      # ── 3. Add ESP32 board index ────────────────────────────────
-      - name: Add ESP32 board manager URL
-        run: |
-          arduino-cli config init
-          arduino-cli config add board_manager.additional_urls https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
-
-      # ── 4. Install ESP32 core ───────────────────────────────────
       - name: Install ESP32 core
         run: |
+          arduino-cli config init --overwrite
+          arduino-cli config add board_manager.additional_urls https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
           arduino-cli core update-index
-          arduino-cli core install esp32:esp32
-          arduino-cli core list
+          arduino-cli core install esp32:esp32@3.0.7
 
-      # ── 5. Install required libraries ───────────────────────────
       - name: Install Arduino libraries
         run: |
-          arduino-cli lib install "Adafruit SH110X"
           arduino-cli lib install "Adafruit GFX Library"
+          arduino-cli lib install "Adafruit SH110X"
           arduino-cli lib install "Adafruit BusIO"
-          arduino-cli lib list
+          arduino-cli lib install "ArduinoJson@^7.0.0"
 
-      # ── 6. Generate secrets.h from GitHub Repository Secrets ────
-      - name: Generate secrets.h
-        env:
-          WIFI_SSID:          ${{ secrets.WIFI_SSID }}
-          WIFI_PASSWORD:      ${{ secrets.WIFI_PASSWORD }}
-          TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
-          TWILIO_AUTH_TOKEN:  ${{ secrets.TWILIO_AUTH_TOKEN }}
-          TWILIO_FROM_NUMBER: ${{ secrets.TWILIO_FROM_NUMBER }}
-          ALERT_TO_NUMBER:    ${{ secrets.ALERT_TO_NUMBER }}
+      - name: Install FluxGarage RoboEyes (from GitHub)
         run: |
-          mkdir -p ./firmware/xenoai_firmware_v3
-          cat > ./firmware/xenoai_firmware_v3/secrets.h << EOF
-          #pragma once
-          #define WIFI_SSID          "${WIFI_SSID}"
-          #define WIFI_PASSWORD      "${WIFI_PASSWORD}"
-          #define TWILIO_ACCOUNT_SID "${TWILIO_ACCOUNT_SID}"
-          #define TWILIO_AUTH_TOKEN  "${TWILIO_AUTH_TOKEN}"
-          #define TWILIO_FROM_NUMBER "${TWILIO_FROM_NUMBER}"
-          #define ALERT_TO_NUMBER    "${ALERT_TO_NUMBER}"
-          EOF
-          echo "secrets.h generated successfully."
+          mkdir -p "$HOME/Arduino/libraries"
+          cd "$HOME/Arduino/libraries"
+          git clone --depth 1 https://github.com/FluxGarage/RoboEyes.git FluxGarage_RoboEyes
 
-      # ── 7. Compile sketch ───────────────────────────────────────
-      #  FQBN options:
-      #    ESP32 generic    →  esp32:esp32:esp32
-      #    ESP32-S3 DevKit  →  esp32:esp32:esp32s3
-      #    ESP32-C3         →  esp32:esp32:esp32c3
-      #    XIAO ESP32-S3    →  esp32:esp32:XIAO_ESP32S3
+      - name: Patch RoboEyes for SH1106G
+        run: |
+          LIB_DIR="$HOME/Arduino/libraries/FluxGarage_RoboEyes"
+          HEADER=$(find "$LIB_DIR" -name "FluxGarage_RoboEyes.h" | head -n1)
+          if [ -z "$HEADER" ]; then
+            echo "ERROR: FluxGarage_RoboEyes.h not found"
+            exit 1
+          fi
+          echo "Patching: $HEADER"
+          sed -i 's|#include <Adafruit_SSD1306.h>|#include <Adafruit_SH110X.h>|g' "$HEADER"
+          sed -i 's|extern Adafruit_SSD1306 display;|extern Adafruit_SH1106G display;|g' "$HEADER"
+          echo "----- Patched header (top 30 lines) -----"
+          head -n 30 "$HEADER"
+
+      - name: Show library versions
+        run: arduino-cli lib list
+
       - name: Compile sketch
         run: |
-          arduino-cli compile --fqbn esp32:esp32:esp32s3 --output-dir ./build --warnings all ./firmware/xenoai_firmware_v3
-          echo "── Build output ──────────────────────────────"
-          ls -lh ./build/
+          mkdir -p build
+          arduino-cli compile \
+            --fqbn "$FQBN" \
+            --build-path "$PWD/build" \
+            --warnings default \
+            --verbose \
+            "$SKETCH_DIR"
 
-      # ── 8. Upload .bin as a downloadable artifact ───────────────
-      - name: Upload firmware binary
+      - name: List build outputs
+        run: ls -la build/
+
+      - name: Stage release artifacts
+        run: |
+          mkdir -p release
+          cp "build/${SKETCH_NAME}.bin"           "release/${SKETCH_NAME}.bin"
+          cp "build/${SKETCH_NAME}.elf"           "release/${SKETCH_NAME}.elf" || true
+          cp "build/${SKETCH_NAME}.bootloader.bin" "release/${SKETCH_NAME}.bootloader.bin" || true
+          cp "build/${SKETCH_NAME}.partitions.bin" "release/${SKETCH_NAME}.partitions.bin" || true
+          ls -la release/
+
+      - name: Upload firmware artifact
         uses: actions/upload-artifact@v4
         with:
-          name: xenoai_firmware_v3_bin
-          path: |
-            ./build/xenoai_firmware_v3.ino.bin
-            ./build/xenoai_firmware_v3.ino.bootloader.bin
-            ./build/xenoai_firmware_v3.ino.partitions.bin
+          name: xenoai_companion_v3-firmware
+          path: release/*
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 90
+
+      - name: Attach to GitHub Release (on tag)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release/*
