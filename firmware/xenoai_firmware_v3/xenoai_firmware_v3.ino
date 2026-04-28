@@ -34,7 +34,7 @@ RoboEyes roboEyes(display);  // patched library uses SH1106G
 
 // ---------- Credentials ----------
 #define WIFI_SSID     "Agam"
-#define WIFI_PASS     "agam2426"
+#define WIFI_PASS     "agam@2426"
 #define OTA_PASSWORD  "xeno123"
 #define OTA_HOSTNAME  "xenoai-desk"
 
