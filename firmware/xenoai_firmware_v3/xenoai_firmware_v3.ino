@@ -690,9 +690,353 @@ void render(uint32_t now) {
     }
   }
 
-  // PRIORITY 4: Mode rendering
+  PRIORITY 4: Mode rendering
   switch (appMode) {
     case MODE_FACE:
       // RoboEyes drives the screen each loop iteration
       roboEyes.update();
- 
+      break;
+    case MODE_CLOCK:
+      drawClock();
+      break;
+    case MODE_DATE:
+      drawDate();
+      break;
+    case MODE_WEATHER:
+      drawWeather();
+      break;
+    case MODE_STOPWATCH:
+      drawStopwatch();
+      break;
+    default: break;
+  }
+}
+
+// ---------- Message overlay ----------
+void drawMessageOverlay() {
+  display.clearDisplay();
+  display.drawRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, WHITE);
+  display.drawRect(2, 2, SCREEN_WIDTH - 4, SCREEN_HEIGHT - 4, WHITE);
+
+  display.setTextSize(1);
+  display.setTextColor(WHITE);
+
+  // word-wrap at ~20 chars
+  const int maxChars = 20;
+  String txt = msgOverlayText;
+  int y = 10;
+  while (txt.length() > 0 && y < SCREEN_HEIGHT - 8) {
+    int cut = txt.length();
+    if (cut > maxChars) {
+      cut = maxChars;
+      int sp = txt.lastIndexOf(' ', cut);
+      if (sp > 4) cut = sp;
+    }
+    String line = txt.substring(0, cut);
+    line.trim();
+    int16_t x1, y1; uint16_t w, h;
+    display.getTextBounds(line, 0, y, &x1, &y1, &w, &h);
+    int x = (SCREEN_WIDTH - (int)w) / 2;
+    if (x < 4) x = 4;
+    display.setCursor(x, y);
+    display.print(line);
+    y += 10;
+    txt = txt.substring(cut);
+    txt.trim();
+  }
+  display.display();
+}
+
+// ---------- Mood cut: hand-drawn pixel face per mood ----------
+void drawMoodCut(MoodId m) {
+  display.clearDisplay();
+  int cx = SCREEN_WIDTH / 2;
+  int cy = SCREEN_HEIGHT / 2;
+  int eyeY = cy - 8;
+  int lx = cx - 22;
+  int rx = cx + 22;
+
+  switch (m) {
+    case M_HAPPY:
+    case M_EXCITED: {
+      // Arc-shaped happy eyes: ^ ^
+      for (int i = -8; i <= 8; i++) {
+        int yy = eyeY - (8 - abs(i)) / 2;
+        display.drawPixel(lx + i, yy, WHITE);
+        display.drawPixel(rx + i, yy, WHITE);
+      }
+      // Smile
+      for (int i = -14; i <= 14; i++) {
+        int yy = cy + 14 + (14 - abs(i)) / 3;
+        display.drawPixel(cx + i, yy, WHITE);
+      }
+    } break;
+
+    case M_ANGRY:
+    case M_IRRITATED: {
+      // Slanted brows
+      for (int i = 0; i < 14; i++) {
+        display.drawPixel(lx - 7 + i, eyeY - 8 + i / 3, WHITE);
+        display.drawPixel(rx - 7 + i, eyeY - 8 + (13 - i) / 3, WHITE);
+      }
+      // Filled eyes
+      display.fillCircle(lx, eyeY, 4, WHITE);
+      display.fillCircle(rx, eyeY, 4, WHITE);
+      // Frown
+      for (int i = -12; i <= 12; i++) {
+        int yy = cy + 18 - (12 - abs(i)) / 3;
+        display.drawPixel(cx + i, yy, WHITE);
+      }
+    } break;
+
+    case M_TIRED:
+    case M_SAD:
+    case M_NERVOUS: {
+      // Half-closed eyes (top half)
+      display.drawCircle(lx, eyeY, 6, WHITE);
+      display.drawCircle(rx, eyeY, 6, WHITE);
+      display.fillRect(lx - 8, eyeY, 17, 8, BLACK);
+      display.fillRect(rx - 8, eyeY, 17, 8, BLACK);
+      display.drawLine(lx - 6, eyeY, lx + 6, eyeY, WHITE);
+      display.drawLine(rx - 6, eyeY, rx + 6, eyeY, WHITE);
+      // Sad mouth
+      for (int i = -10; i <= 10; i++) {
+        int yy = cy + 18 - (10 - abs(i)) / 3;
+        display.drawPixel(cx + i, yy, WHITE);
+      }
+    } break;
+
+    case M_SURPRISED: {
+      // Wide circles
+      display.drawCircle(lx, eyeY, 7, WHITE);
+      display.drawCircle(rx, eyeY, 7, WHITE);
+      display.fillCircle(lx, eyeY, 2, WHITE);
+      display.fillCircle(rx, eyeY, 2, WHITE);
+      // O mouth
+      display.drawCircle(cx, cy + 16, 4, WHITE);
+    } break;
+
+    case M_LOVE: {
+      // Heart-shaped eyes (approx)
+      drawTinyHeart(lx, eyeY);
+      drawTinyHeart(rx, eyeY);
+      // Blush
+      display.fillCircle(lx - 10, cy + 8, 2, WHITE);
+      display.fillCircle(rx + 10, cy + 8, 2, WHITE);
+      // Smile
+      for (int i = -10; i <= 10; i++) {
+        int yy = cy + 14 + (10 - abs(i)) / 3;
+        display.drawPixel(cx + i, yy, WHITE);
+      }
+    } break;
+
+    case M_NEUTRAL:
+    default: {
+      display.fillCircle(lx, eyeY, 4, WHITE);
+      display.fillCircle(rx, eyeY, 4, WHITE);
+      display.drawLine(cx - 10, cy + 16, cx + 10, cy + 16, WHITE);
+    } break;
+  }
+  display.display();
+}
+
+void drawTinyHeart(int cx, int cy) {
+  display.fillCircle(cx - 3, cy - 1, 3, WHITE);
+  display.fillCircle(cx + 3, cy - 1, 3, WHITE);
+  display.fillTriangle(cx - 6, cy, cx + 6, cy, cx, cy + 6, WHITE);
+}
+
+// ---------- Clock ----------
+void drawClock() {
+  display.clearDisplay();
+  display.setTextColor(WHITE);
+
+  struct tm ti;
+  if (timeSynced && getLocalTime(&ti, 50)) {
+    char buf[16];
+    strftime(buf, sizeof(buf), "%H:%M", &ti);
+    display.setTextSize(3);
+    int16_t x1, y1; uint16_t w, h;
+    display.getTextBounds(buf, 0, 0, &x1, &y1, &w, &h);
+    display.setCursor((SCREEN_WIDTH - w) / 2, 12);
+    display.print(buf);
+
+    char sec[8];
+    strftime(sec, sizeof(sec), ":%S", &ti);
+    display.setTextSize(1);
+    display.getTextBounds(sec, 0, 0, &x1, &y1, &w, &h);
+    display.setCursor((SCREEN_WIDTH - w) / 2, 48);
+    display.print(sec);
+  } else {
+    display.setTextSize(1);
+    display.setCursor(8, 28);
+    display.print("Syncing time...");
+  }
+  display.display();
+}
+
+// ---------- Date ----------
+void drawDate() {
+  display.clearDisplay();
+  display.setTextColor(WHITE);
+  struct tm ti;
+  if (timeSynced && getLocalTime(&ti, 50)) {
+    char d1[16], d2[24];
+    strftime(d1, sizeof(d1), "%a", &ti);
+    strftime(d2, sizeof(d2), "%d %b %Y", &ti);
+
+    int16_t x1, y1; uint16_t w, h;
+    display.setTextSize(2);
+    display.getTextBounds(d1, 0, 0, &x1, &y1, &w, &h);
+    display.setCursor((SCREEN_WIDTH - w) / 2, 8);
+    display.print(d1);
+
+    display.setTextSize(1);
+    display.getTextBounds(d2, 0, 0, &x1, &y1, &w, &h);
+    display.setCursor((SCREEN_WIDTH - w) / 2, 40);
+    display.print(d2);
+  } else {
+    display.setTextSize(1);
+    display.setCursor(8, 28);
+    display.print("Syncing date...");
+  }
+  display.display();
+}
+
+// ---------- Weather ----------
+void drawWeather() {
+  display.clearDisplay();
+  display.setTextColor(WHITE);
+  display.setTextSize(1);
+  display.setCursor(0, 0);
+  display.print("Nagpur");
+
+  if (weatherValid) {
+    char tbuf[16];
+    snprintf(tbuf, sizeof(tbuf), "%.1f C", weatherTempC);
+    display.setTextSize(2);
+    int16_t x1, y1; uint16_t w, h;
+    display.getTextBounds(tbuf, 0, 0, &x1, &y1, &w, &h);
+    display.setCursor((SCREEN_WIDTH - w) / 2, 18);
+    display.print(tbuf);
+
+    display.setTextSize(1);
+    display.getTextBounds(weatherCondition, 0, 0, &x1, &y1, &w, &h);
+    int x = (SCREEN_WIDTH - (int)w) / 2;
+    if (x < 0) x = 0;
+    display.setCursor(x, 48);
+    display.print(weatherCondition);
+  } else {
+    display.setCursor(8, 28);
+    display.print("Loading weather...");
+  }
+  display.display();
+}
+
+// ---------- Stopwatch ----------
+void drawStopwatch() {
+  display.clearDisplay();
+  display.setTextColor(WHITE);
+  display.setTextSize(1);
+  display.setCursor(0, 0);
+  display.print("Stopwatch");
+  display.setCursor(80, 0);
+  switch (swState) {
+    case SW_RESET:   display.print("READY"); break;
+    case SW_RUNNING: display.print("RUN");   break;
+    case SW_PAUSED:  display.print("PAUSE"); break;
+  }
+
+  uint32_t e = stopwatchElapsed();
+  uint32_t mm = (e / 60000UL);
+  uint32_t ss = (e / 1000UL) % 60UL;
+  uint32_t cs = (e / 10UL) % 100UL;
+  char buf[16];
+  snprintf(buf, sizeof(buf), "%02lu:%02lu.%02lu",
+           (unsigned long)mm, (unsigned long)ss, (unsigned long)cs);
+
+  display.setTextSize(2);
+  int16_t x1, y1; uint16_t w, h;
+  display.getTextBounds(buf, 0, 0, &x1, &y1, &w, &h);
+  display.setCursor((SCREEN_WIDTH - w) / 2, 22);
+  display.print(buf);
+
+  display.setTextSize(1);
+  display.setCursor(0, 54);
+  display.print("Long-press: cycle");
+  display.display();
+  }
+
+// ============================================================
+//                  CUSTOM SLEEP ANIMATION
+// ============================================================
+void drawSleepAnimation() {
+  display.clearDisplay();
+
+  int cx = SCREEN_WIDTH / 2;
+  int cy = SCREEN_HEIGHT / 2;
+  int eyeY = cy - 4;
+  int lx = cx - 24;
+  int rx = cx + 24;
+
+  // Half-lidded droopy eyes (mask bottom half of circle)
+  int eyeR = 10;
+  display.drawCircle(lx, eyeY, eyeR, WHITE);
+  display.drawCircle(rx, eyeY, eyeR, WHITE);
+  display.fillRect(lx - eyeR - 1, eyeY - eyeR - 1,
+                   2 * eyeR + 3, eyeR + 1, BLACK);
+  display.fillRect(rx - eyeR - 1, eyeY - eyeR - 1,
+                   2 * eyeR + 3, eyeR + 1, BLACK);
+  // Lid line
+  display.drawLine(lx - eyeR, eyeY, lx + eyeR, eyeY, WHITE);
+  display.drawLine(rx - eyeR, eyeY, rx + eyeR, eyeY, WHITE);
+  // Subtle mouth
+  display.drawLine(cx - 6, cy + 14, cx + 6, cy + 14, WHITE);
+
+  // ZZZ bubble logic: every 3s spawn a new bubble, each advances stage every 700ms
+  uint32_t now = millis();
+  if (now - lastZSpawnMs >= ZZZ_SPAWN_MS) {
+    lastZSpawnMs = now;
+    // find a free slot
+    for (int i = 0; i < 3; i++) {
+      if (!zbubs[i].alive) {
+        zbubs[i].alive = true;
+        zbubs[i].bornMs = now;
+        zbubs[i].stage = 0;
+        break;
+      }
+    }
+  }
+
+  for (int i = 0; i < 3; i++) {
+    if (!zbubs[i].alive) continue;
+    uint32_t age = now - zbubs[i].bornMs;
+    uint8_t st = age / ZZZ_STAGE_MS;
+    if (st > 2) {
+      zbubs[i].alive = false;
+      continue;
+    }
+    zbubs[i].stage = st;
+    drawZ(st);
+  }
+
+  display.display();
+}
+
+void drawZ(uint8_t stage) {
+  // Stage 0: small lower-right; Stage 1: medium higher; Stage 2: large highest
+  display.setTextColor(WHITE);
+  int x, y;
+  uint8_t size;
+  switch (stage) {
+    case 0: x = 100; y = 40; size = 1; break;
+    case 1: x = 104; y = 22; size = 2; break;
+    case 2: x = 108; y = 4;  size = 3; break;
+    default: return;
+  }
+  display.setTextSize(size);
+  display.setCursor(x, y);
+  display.print('z');
+}
+
+
